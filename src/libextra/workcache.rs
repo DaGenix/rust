@@ -14,6 +14,7 @@ use core::prelude::*;
 
 use json;
 use sha1;
+use sha1::Sha1;
 use serialize::{Encoder, Encodable, Decoder, Decodable};
 use sort;
 
