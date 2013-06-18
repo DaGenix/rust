@@ -100,6 +100,7 @@ pub mod digest;
 pub mod getopts;
 pub mod json;
 pub mod sha1;
+pub mod sha2;
 pub mod md4;
 pub mod tempfile;
 pub mod term;

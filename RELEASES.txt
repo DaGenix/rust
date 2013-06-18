@@ -70,6 +70,7 @@ Version 0.7 (July 2013)
       * extra: `Rational` number type and `rational` module.
       * extra: `BigInt`, `BigUint` implement numeric and comparison traits.
       * extra: `term` uses terminfo now, is more correct.
+      * extra: Unoptimized implementation of fixed output size versions of SHA-2 digests.
 
    * Tooling
       * `unused_unsafe` lint mode for detecting unnecessary `unsafe` blocks.
