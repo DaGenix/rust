@@ -27,31 +27,13 @@ use core::prelude::*;
 use core::uint;
 use core::vec;
 
+use digest::Digest;
+
 /*
  * A SHA-1 implementation derived from Paul E. Jones's reference
  * implementation, which is written for clarity, not speed. At some
  * point this will want to be rewritten.
  */
-
-/// The SHA-1 interface
-pub trait Sha1 {
-    /// Provide message input as bytes
-    fn input(&mut self, &const [u8]);
-    /// Provide message input as string
-    fn input_str(&mut self, &str);
-    /**
-     * Read the digest as a vector of 20 bytes. After calling this no further
-     * input may be provided until reset is called.
-     */
-    fn result(&mut self) -> ~[u8];
-    /**
-     * Read the digest as a hex string. After calling this no further
-     * input may be provided until reset is called.
-     */
-    fn result_str(&mut self) -> ~str;
-    /// Reset the SHA-1 state for reuse
-    fn reset(&mut self);
-}
 
 // Some unexported constants
 static digest_buf_len: uint = 5u;
@@ -62,7 +44,7 @@ static k1: u32 = 0x6ED9EBA1u32;
 static k2: u32 = 0x8F1BBCDCu32;
 static k3: u32 = 0xCA62C1D6u32;
 
-struct Sha1State {
+struct Sha1 {
     h: ~[u32],
     len_low: u32,
     len_high: u32,
@@ -72,7 +54,7 @@ struct Sha1State {
     work_buf: ~[u32]
 }
 
-fn add_input(st: &mut Sha1State, msg: &const [u8]) {
+fn add_input(st: &mut Sha1, msg: &const [u8]) {
     assert!((!st.computed));
     for vec::each_const(msg) |element| {
         st.msg_block[st.msg_block_idx] = *element;
@@ -89,7 +71,7 @@ fn add_input(st: &mut Sha1State, msg: &const [u8]) {
     }
 }
 
-fn process_msg_block(st: &mut Sha1State) {
+fn process_msg_block(st: &mut Sha1) {
     assert_eq!(st.h.len(), digest_buf_len);
     assert_eq!(st.work_buf.len(), work_buf_len);
     let mut t: int; // Loop counter
@@ -170,7 +152,7 @@ fn circular_shift(bits: u32, word: u32) -> u32 {
     return word << bits | word >> 32u32 - bits;
 }
 
-fn mk_result(st: &mut Sha1State) -> ~[u8] {
+fn mk_result(st: &mut Sha1) -> ~[u8] {
     if !(*st).computed { pad_msg(st); (*st).computed = true; }
     let mut rs: ~[u8] = ~[];
     for st.h.mut_iter().advance |ptr_hpart| {
@@ -193,7 +175,7 @@ fn mk_result(st: &mut Sha1State) -> ~[u8] {
  * call process_msg_block() appropriately.  When it returns, it
  * can be assumed that the message digest has been computed.
  */
-fn pad_msg(st: &mut Sha1State) {
+fn pad_msg(st: &mut Sha1) {
     assert_eq!((*st).msg_block.len(), msg_block_len);
 
     /*
@@ -230,7 +212,7 @@ fn pad_msg(st: &mut Sha1State) {
     process_msg_block(st);
 }
 
-impl Sha1 for Sha1State {
+impl Digest for Sha1 {
     fn reset(&mut self) {
         assert_eq!(self.h.len(), digest_buf_len);
         self.len_low = 0u32;
@@ -244,42 +226,30 @@ impl Sha1 for Sha1State {
         self.computed = false;
     }
     fn input(&mut self, msg: &const [u8]) { add_input(self, msg); }
-    fn input_str(&mut self, msg: &str) {
-        add_input(self, msg.as_bytes());
-    }
     fn result(&mut self) -> ~[u8] { return mk_result(self); }
-    fn result_str(&mut self) -> ~str {
-        let rr = mk_result(self);
-        let mut s = ~"";
-        for rr.each |b| {
-            let hex = uint::to_str_radix(*b as uint, 16u);
-            if hex.len() == 1 {
-                s += "0";
-            }
-            s += hex;
-        }
-        return s;
-    }
 }
     
-/// Construct a `sha` object
-pub fn sha1() -> ~Sha1State {
-    let mut st = ~Sha1State {
-         h: vec::from_elem(digest_buf_len, 0u32),
-         len_low: 0u32,
-         len_high: 0u32,
-         msg_block: vec::from_elem(msg_block_len, 0u8),
-         msg_block_idx: 0u,
-         computed: false,
-         work_buf: vec::from_elem(work_buf_len, 0u32)
-    };
-    st.reset();
-    return st;
+impl Sha1 {
+    /// Construct a `sha1` object
+    pub fn new() -> ~Sha1 {
+        let mut st = ~Sha1 {
+            h: vec::from_elem(digest_buf_len, 0u32),
+            len_low: 0u32,
+            len_high: 0u32,
+            msg_block: vec::from_elem(msg_block_len, 0u8),
+            msg_block_idx: 0u,
+            computed: false,
+            work_buf: vec::from_elem(work_buf_len, 0u32)
+        };
+        st.reset();
+        return st;
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use sha1;
+    use digest::{input_str, result_str};
+    use sha1::Sha1;
 
     #[test]
     fn test() {
@@ -377,13 +347,13 @@ mod tests {
         }
         // Test that it works when accepting the message all at once
 
-        let mut sh = sha1::sha1();
+        let mut sh = Sha1::new();
         for tests.each |t| {
-            sh.input_str(t.input);
+            input_str(sh, t.input);
             let out = sh.result();
             check_vec_eq(copy t.output, out);
 
-            let out_str = sh.result_str();
+            let out_str = result_str(sh);
             assert_eq!(out_str.len(), 40);
             assert!(out_str == t.output_str);
 
@@ -397,13 +367,13 @@ mod tests {
             let mut left = len;
             while left > 0u {
                 let take = (left + 1u) / 2u;
-                sh.input_str(t.input.slice(len - left, take + len - left));
+                input_str(sh, t.input.slice(len - left, take + len - left));
                 left = left - take;
             }
             let out = sh.result();
             check_vec_eq(copy t.output, out);
 
-            let out_str = sh.result_str();
+            let out_str = result_str(sh);
             assert_eq!(out_str.len(), 40);
             assert!(out_str == t.output_str);
 

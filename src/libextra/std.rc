@@ -96,6 +96,7 @@ pub mod treemap;
 
 pub mod ebml;
 pub mod dbg;
+pub mod digest;
 pub mod getopts;
 pub mod json;
 pub mod sha1;
