@@ -245,7 +245,7 @@ impl Digest for Sha1 {
 mod tests {
     use core::vec;
 
-    use digest::{Digest, DigestUtil};
+    use digest::Digest;
     use sha1::Sha1;
 
     #[test]

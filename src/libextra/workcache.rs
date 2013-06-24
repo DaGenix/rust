@@ -12,7 +12,7 @@
 
 use core::prelude::*;
 
-use digest::DigestUtil;
+use digest::Digest;
 use json;
 use sha1::Sha1;
 use serialize::{Encoder, Encodable, Decoder, Decodable};
