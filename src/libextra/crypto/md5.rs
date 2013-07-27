@@ -220,7 +220,7 @@ impl Digest for Md5 {
 
 #[cfg(test)]
 mod tests {
-    use digest::{Digest, DigestUtil};
+    use digest::Digest;
     use md5::Md5;
 
     struct Test {
