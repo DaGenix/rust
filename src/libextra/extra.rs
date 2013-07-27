@@ -75,6 +75,8 @@ pub mod digest;
 pub mod sha1;
 #[path="crypto/sha2.rs"]
 pub mod sha2;
+#[path="crypto/md5.rs"]
+pub mod md5;
 
 // And ... other stuff
 
