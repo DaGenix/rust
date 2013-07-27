@@ -8,9 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// TODO - add in missing docs!
-#[allow(missing_doc)];
-
 use std::uint;
 
 use cryptoutil::{write_u64_be, write_u32_be, read_u64v_be, read_u32v_be, FixedBuffer128,
@@ -19,7 +16,7 @@ use digest::Digest;
 
 
 // Sha-512 and Sha-256 use basically the same calculations which are implemented by these macros.
-// Inlining the calculations seems to let LLVM generate better code.
+// Inlining the calculations seems to result in better generated code.
 macro_rules! schedule_round( ($t:expr) => (
         W[$t] = sigma1(W[$t - 2]) + W[$t - 7] + sigma0(W[$t - 15]) + W[$t - 16];
     )
@@ -78,8 +75,8 @@ impl BitCounter {
 }
 
 
-// A structure that represents that state of a digest computation
-// for the SHA-2 512 family of digest functions
+// A structure that represents that state of a digest computation for the SHA-2 512 family of digest
+// functions
 struct Engine512State {
     H0: u64,
     H1: u64,
@@ -223,6 +220,8 @@ static K64: [u64, ..80] = [
 ];
 
 
+// A structure that keeps track of the state of the Sha-512 operation and contains the logic
+// necessary to perform the final calculations.
 struct Engine512 {
     bit_counter: BitCounter,
     buffer: FixedBuffer128,
@@ -478,6 +477,8 @@ static H512_TRUNC_224: [u64, ..8] = [
 ];
 
 
+// A structure that represents that state of a digest computation for the SHA-2 512 family of digest
+// functions
 struct Engine256State {
     H0: u32,
     H1: u32,
@@ -608,8 +609,8 @@ static K32: [u32, ..64] = [
 ];
 
 
-// A structure that represents that state of a digest computation
-// for the SHA-2 256 family of digest functions
+// A structure that keeps track of the state of the Sha-256 operation and contains the logic
+// necessary to perform the final calculations.
 struct Engine256 {
     length: u64,
     buffer: FixedBuffer64,
