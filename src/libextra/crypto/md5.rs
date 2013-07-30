@@ -220,6 +220,7 @@ impl Digest for Md5 {
 
 #[cfg(test)]
 mod tests {
+    use cryptoutil::test::test_digest_1million_random;
     use digest::Digest;
     use md5::Md5;
 
@@ -279,6 +280,15 @@ mod tests {
         let mut sh = Md5::new();
 
         test_hash(&mut sh, tests);
+    }
+
+    #[test]
+    fn test_1million_random_md5() {
+        let mut sh = Md5::new();
+        test_digest_1million_random(
+            &mut sh,
+            64,
+            "7707d6ae4e027c70eea2a935c2296f21");
     }
 }
 
