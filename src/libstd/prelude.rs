@@ -49,7 +49,7 @@ pub use container::{Container, Mutable, Map, MutableMap, Set, MutableSet};
 pub use hash::Hash;
 pub use iter::Times;
 pub use iterator::{Iterator, IteratorUtil, DoubleEndedIterator, DoubleEndedIteratorUtil};
-pub use iterator::OrdIterator;
+pub use iterator::{ClonableIterator, OrdIterator, Range};
 pub use num::{Num, NumCast};
 pub use num::{Orderable, Signed, Unsigned, Round};
 pub use num::{Algebraic, Trigonometric, Exponential, Hyperbolic};

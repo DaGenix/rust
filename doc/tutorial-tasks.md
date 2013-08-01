@@ -122,7 +122,7 @@ should interleave the output in vaguely random order.
 # use std::task::spawn;
 # use std::int;
 
-for int::range(0, 20) |child_task_number| {
+foreach child_task_number in Range::new(0, 20) {
     do spawn {
        print(fmt!("I am child number %d\n", child_task_number));
     }
@@ -242,7 +242,7 @@ Instead we can use a `SharedChan`, a type that allows a single
 let (port, chan) = stream();
 let chan = SharedChan::new(chan);
 
-for uint::range(0, 3) |init_val| {
+foreach init_val in Range::new(0u, 3) {
     // Create a new channel handle to distribute to the child task
     let child_chan = chan.clone();
     do spawn {
@@ -317,7 +317,7 @@ be distributed on the available cores.
 # use std::uint;
 fn partial_sum(start: uint) -> f64 {
     let mut local_sum = 0f64;
-    for uint::range(start*100000, (start+1)*100000) |num| {
+    foreach num in Range::new(start*100000, (start+1)*100000) {
         local_sum += (num as f64 + 1.0).pow(&-2.0);
     }
     local_sum
@@ -363,7 +363,7 @@ fn main() {
 
     let numbers_arc = Arc::new(numbers);
 
-    for uint::range(1,10) |num| {
+    foreach num in Range::new(1u, 10) {
         let (port, chan)  = stream();
         chan.send(numbers_arc.clone());
 

@@ -2388,7 +2388,7 @@ An example of a for loop over a series of integers:
 ~~~~
 # use std::uint;
 # fn bar(b:uint) { }
-for uint::range(0, 256) |i| {
+foreach i in Range::new(0u, 256) {
     bar(i);
 }
 ~~~~

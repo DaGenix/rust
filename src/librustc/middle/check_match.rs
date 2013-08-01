@@ -19,7 +19,6 @@ use middle::moves;
 use util::ppaux::ty_to_str;
 
 use std::num;
-use std::uint;
 use std::vec;
 use extra::sort;
 use syntax::ast::*;
@@ -261,7 +260,7 @@ pub fn is_useful(cx: &MatchCheckCtxt, m: &matrix, v: &[@pat]) -> useful {
                     _ => max_len
                   }
                 };
-                for uint::range(0, max_len + 1) |n| {
+                foreach n in Range::new(0u, max_len + 1) {
                   match is_useful_specialized(cx, m, v, vec(n), n, left_ty) {
                     not_useful => (),
                     ref u => return *u,

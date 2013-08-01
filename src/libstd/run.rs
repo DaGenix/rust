@@ -590,7 +590,7 @@ pub fn make_command_line(prog: &str, args: &[~str]) -> ~str {
         if quote {
             cmd.push_char('"');
         }
-        for uint::range(0, arg.len()) |i| {
+        foreach i in Range::new(0u, arg.len()) {
             append_char_at(cmd, arg, i);
         }
         if quote {
