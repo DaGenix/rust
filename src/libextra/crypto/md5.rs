@@ -210,7 +210,7 @@ impl Digest for Md5 {
         write_u32_le(out.mut_slice(12, 16), self.state.s3);
     }
 
-    fn output_bits(&self) -> uint { 128 }
+    fn output_bits() -> uint { 128 }
 }
 
 

@@ -270,7 +270,7 @@ impl Digest for Sha512 {
         self.engine.reset(&H512);
     }
 
-    fn output_bits(&self) -> uint { 512 }
+    fn output_bits() -> uint { 512 }
 }
 
 static H512: [u64, ..8] = [
@@ -320,7 +320,7 @@ impl Digest for Sha384 {
         self.engine.reset(&H384);
     }
 
-    fn output_bits(&self) -> uint { 384 }
+    fn output_bits() -> uint { 384 }
 }
 
 static H384: [u64, ..8] = [
@@ -368,7 +368,7 @@ impl Digest for Sha512Trunc256 {
         self.engine.reset(&H512_TRUNC_256);
     }
 
-    fn output_bits(&self) -> uint { 256 }
+    fn output_bits() -> uint { 256 }
 }
 
 static H512_TRUNC_256: [u64, ..8] = [
@@ -416,7 +416,7 @@ impl Digest for Sha512Trunc224 {
         self.engine.reset(&H512_TRUNC_224);
     }
 
-    fn output_bits(&self) -> uint { 224 }
+    fn output_bits() -> uint { 224 }
 }
 
 static H512_TRUNC_224: [u64, ..8] = [
@@ -658,7 +658,7 @@ impl Digest for Sha256 {
         self.engine.reset(&H256);
     }
 
-    fn output_bits(&self) -> uint { 256 }
+    fn output_bits() -> uint { 256 }
 }
 
 static H256: [u32, ..8] = [
@@ -708,7 +708,7 @@ impl Digest for Sha224 {
         self.engine.reset(&H224);
     }
 
-    fn output_bits(&self) -> uint { 224 }
+    fn output_bits() -> uint { 224 }
 }
 
 static H224: [u32, ..8] = [
