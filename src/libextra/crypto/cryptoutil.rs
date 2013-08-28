@@ -97,6 +97,20 @@ pub fn read_u32v_le(dst: &mut[u32], input: &[u8]) {
 }
 
 
+pub fn fixed_time_eq<T: Int>(lhs: &[T], rhs: &[T]) -> bool {
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+
+    let mut x: T = Zero::zero();
+    for i in range(0, lhs.len()) {
+        x = x | (lhs[i] ^ rhs[i]);
+    }
+
+    return x == Zero::zero();
+}
+
+
 trait ToBits {
     /// Convert the value in bytes to the number of bits, a tuple where the 1st item is the
     /// high-order value and the 2nd item is the low order value.
