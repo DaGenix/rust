@@ -47,6 +47,13 @@ pub trait Digest {
         return Digest::output_bits::<Self>();
     }
 
+   /**
+     * Get the output size in bytes.
+     */
+    fn get_output_bytes(&self) -> uint {
+        return Digest::output_bytes::<Self>();
+    }
+
     /**
      * Convenience function that feeds a string into a digest.
      *
@@ -63,7 +70,7 @@ pub trait Digest {
      * ~str in hexadecimal format.
      */
     fn result_str(&mut self) -> ~str {
-        let mut buf = vec::from_elem((Digest::output_bits::<Self>()+7)/8, 0u8);
+        let mut buf = vec::from_elem(Digest::output_bytes::<Self>(), 0u8);
         self.result(buf);
         return to_hex(buf);
     }
@@ -73,6 +80,12 @@ pub trait Digest {
      */
     fn output_bits() -> uint;
 
+    /**
+     * Get the output size in bytes.
+     */
+    fn output_bytes() -> uint {
+        return (Digest::output_bits::<Self>() + 7) / 8;
+    }
 }
 
 fn to_hex(rr: &[u8]) -> ~str {
