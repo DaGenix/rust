@@ -55,6 +55,13 @@ pub trait Digest {
     }
 
     /**
+     * Get the block size in bytes.
+     */
+    fn get_block_size(&self) -> uint {
+        return Digest::block_size::<Self>();
+    }
+
+    /**
      * Convenience function that feeds a string into a digest.
      *
      * # Arguments
@@ -86,6 +93,11 @@ pub trait Digest {
     fn output_bytes() -> uint {
         return (Digest::output_bits::<Self>() + 7) / 8;
     }
+
+    /**
+     * Get the block size in bytes.
+     */
+    fn block_size() -> uint;
 }
 
 fn to_hex(rr: &[u8]) -> ~str {
