@@ -180,6 +180,10 @@ impl Md5 {
 }
 
 impl Digest for Md5 {
+    fn new() -> Md5 {
+        return Md5::new();
+    }
+
     fn input(&mut self, input: &[u8]) {
         assert!(!self.finished);
         // Unlike Sha1 and Sha2, the length value in MD5 is defined as the length of the message mod

@@ -159,6 +159,10 @@ impl Sha1 {
 }
 
 impl Digest for Sha1 {
+    fn new() -> Sha1 {
+        return Sha1::new();
+    }
+
     fn reset(&mut self) {
         self.length_bits = 0;
         self.h[0] = 0x67452301u32;

@@ -249,6 +249,10 @@ impl Sha512 {
 }
 
 impl Digest for Sha512 {
+    fn new() -> Sha512 {
+        return Sha512::new();
+    }
+
     fn input(&mut self, d: &[u8]) {
         self.engine.input(d);
     }
@@ -303,6 +307,10 @@ impl Sha384 {
 }
 
 impl Digest for Sha384 {
+    fn new() -> Sha384 {
+        return Sha384::new();
+    }
+
     fn input(&mut self, d: &[u8]) {
         self.engine.input(d);
     }
@@ -355,6 +363,10 @@ impl Sha512Trunc256 {
 }
 
 impl Digest for Sha512Trunc256 {
+    fn new() -> Sha512Trunc256 {
+        return Sha512Trunc256::new();
+    }
+
     fn input(&mut self, d: &[u8]) {
         self.engine.input(d);
     }
@@ -405,6 +417,10 @@ impl Sha512Trunc224 {
 }
 
 impl Digest for Sha512Trunc224 {
+    fn new() -> Sha512Trunc224 {
+        return Sha512Trunc224::new();
+    }
+
     fn input(&mut self, d: &[u8]) {
         self.engine.input(d);
     }
@@ -645,6 +661,10 @@ impl Sha256 {
 }
 
 impl Digest for Sha256 {
+    fn new() -> Sha256 {
+        return Sha256::new();
+    }
+
     fn input(&mut self, d: &[u8]) {
         self.engine.input(d);
     }
@@ -699,6 +719,10 @@ impl Sha224 {
 }
 
 impl Digest for Sha224 {
+    fn new() -> Sha224 {
+        return Sha224::new();
+    }
+
     fn input(&mut self, d: &[u8]) {
         self.engine.input(d);
     }

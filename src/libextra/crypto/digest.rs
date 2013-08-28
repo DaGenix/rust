@@ -17,6 +17,11 @@ use std::vec;
  */
 pub trait Digest {
     /**
+     * Create a new instance of a Digest.
+     */
+    fn new() -> Self;
+
+    /**
      * Provide message data.
      *
      * # Arguments
