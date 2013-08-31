@@ -14,51 +14,69 @@ use digest::Digest;
 use mac::{Mac, MacResult};
 
 
+/// TMP
 pub struct Hmac<D> {
     priv digest: D,
-    priv block_key: ~[u8],
+    priv i_key: ~[u8],
+    priv o_key: ~[u8],
     priv finished: bool
 }
 
-fn derive_key(key: &[u8], mask: u8) -> ~[u8] {
-    let mut x = key.to_owned();
+fn derive_key(key: &mut [u8], mask: u8) {
     for i in range(0, key.len()) {
-        x[i] ^= mask;
+        key[i] ^= mask;
     }
-    return x;
 }
 
-fn determine_block_key<D: Digest>(digest: &mut D, key: &[u8]) -> ~[u8] {
-    let bs = Digest::block_size::<D>();
-    let mut block_key = vec::from_elem(bs, 0u8);
+fn expand_key<D: Digest>(digest: &mut D, key: &[u8]) -> ~[u8] {
+    let bs = digest.block_size();
+    let mut expanded_key = vec::from_elem(bs, 0u8);
     if key.len() <= bs {
-        vec::bytes::copy_memory(block_key, key, key.len());
-        for i in range(key.len(), block_key.len()) {
-            block_key[i] = 0;
+        vec::bytes::copy_memory(expanded_key, key, key.len());
+        for i in range(key.len(), expanded_key.len()) {
+            expanded_key[i] = 0;
         }
     } else {
-        let output_size = Digest::output_bytes::<D>();
+        let output_size = digest.output_bytes();
         digest.input(key);
-        digest.result(block_key.mut_slice_to(output_size));
+        digest.result(expanded_key.mut_slice_to(output_size));
         digest.reset();
-        for i in range(output_size, block_key.len()) {
-            block_key[i] = 0;
+        for i in range(output_size, expanded_key.len()) {
+            expanded_key[i] = 0;
         }
     }
-    return block_key;
+    return expanded_key;
+}
+
+fn create_keys<D: Digest>(digest: &mut D, key: &[u8]) -> (~[u8], ~[u8]) {
+    let mut i_key = expand_key(digest, key);
+    let mut o_key = i_key.clone();
+    derive_key(i_key, 0x36);
+    derive_key(o_key, 0x5c);
+    return (i_key, o_key);
 }
 
 impl <D: Digest> Hmac<D> {
-    fn new(mut digest: D, key: &[u8]) -> Hmac<D> {
-        let block_key = determine_block_key(&mut digest, key);
-
-        digest.input(derive_key(block_key, 0x36));
-
+    /// TMP
+    pub fn new(mut digest: D, key: &[u8]) -> Hmac<D> {
+        let (i_key, o_key) = create_keys(&mut digest, key);
+        digest.input(i_key);
         return Hmac {
             digest: digest,
-            block_key: block_key,
+            i_key: i_key,
+            o_key: o_key,
             finished: false
         }
+    }
+
+    /// TMP
+    pub fn reset_key(&mut self, key: &[u8]) {
+        self.digest.reset();
+        let (i_key, o_key) = create_keys(&mut self.digest, key);
+        self.i_key = i_key;
+        self.o_key = o_key;
+        self.digest.input(self.i_key);
+        self.finished = false;
     }
 }
 
@@ -70,37 +88,34 @@ impl <D: Digest> Mac for Hmac<D> {
 
     fn reset(&mut self) {
         self.digest.reset();
-        self.digest.input(derive_key(self.block_key, 0x36));
-        self.finished = false;
-    }
-
-    fn reset_key(&mut self, key: &[u8]) {
-        self.digest.reset();
-        self.block_key = determine_block_key(&mut self.digest, key);
-        self.digest.input(derive_key(self.block_key, 0x36));
+        self.digest.input(self.i_key);
         self.finished = false;
     }
 
     fn result(&mut self) -> MacResult {
-        let output_size = Digest::output_bytes::<D>();
-        let mut tmp = vec::from_elem(output_size, 0u8);
+        let output_size = self.digest.output_bytes();
+        let mut code = vec::from_elem(output_size, 0u8);
 
+        self.raw_result(code);
+
+        return MacResult::new_from_owned(code);
+    }
+
+    fn raw_result(&mut self, output: &mut [u8]) {
         if !self.finished {
-            self.digest.result(tmp);
+            self.digest.result(output);
 
             self.digest.reset();
-            self.digest.input(derive_key(self.block_key, 0x5c));
-            self.digest.input(tmp);
+            self.digest.input(self.o_key);
+            self.digest.input(output);
 
             self.finished = true;
         }
 
-        self.digest.result(tmp);
-
-        return MacResult::new_from_owned(tmp);
+        self.digest.result(output);
     }
 
-    fn output_bytes() -> uint { Digest::output_bytes::<D>() }
+    fn output_bytes(&self) -> uint { self.digest.output_bytes() }
 }
 
 

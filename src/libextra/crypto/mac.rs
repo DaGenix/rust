@@ -11,32 +11,46 @@
 use cryptoutil::fixed_time_eq;
 
 
+/// TMP
 pub trait Mac {
+    /// TMP
     fn input(&mut self, data: &[u8]);
+
+    /// TMP
     fn reset(&mut self);
-    fn reset_key(&mut self, key: &[u8]);
+
+    /// TMP
     fn result(&mut self) -> MacResult;
-    fn output_bytes() -> uint;
+
+    /// TMP
+    fn raw_result(&mut self, output: &mut [u8]);
+
+    /// TMP
+    fn output_bytes(&self) -> uint;
 }
 
 
+/// TMP
 pub struct MacResult {
     priv code: ~[u8]
 }
 
 impl MacResult {
+    /// TMP
     pub fn new(code: &[u8]) -> MacResult {
         return MacResult {
             code: code.to_owned()
         };
     }
 
+    /// TMP
     pub fn new_from_owned(code: ~[u8]) -> MacResult {
         return MacResult {
             code: code
         };
     }
 
+    /// TMP
     pub fn code<'s>(&'s self) -> &'s ~[u8] {
         return &'s self.code;
     }
