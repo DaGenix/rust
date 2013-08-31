@@ -97,6 +97,7 @@ pub fn read_u32v_le(dst: &mut[u32], input: &[u8]) {
 }
 
 
+/// TMP
 pub fn fixed_time_eq<T: Int>(lhs: &[T], rhs: &[T]) -> bool {
     if lhs.len() != rhs.len() {
         return false;
