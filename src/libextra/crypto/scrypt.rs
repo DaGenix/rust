@@ -8,15 +8,33 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+/*!
+ * This module implements the Scrypt key derivation function as specified in [1].
+ *
+ * # References
+ * [1] - C. Percival. Stronger Key Derivation Via Sequential Memory-Hard Functions.
+ *       http://www.tarsnap.com/scrypt/scrypt.pdf
+ */
+
+// There are a variety of places that we need to cast a u32 to a uint. The implementation is
+// #[cfg]ed to not compile on platforms where that isn't safe for all values. A more elegant
+// solution would be to check if its safe for the particular values of interest, although that would
+// be more complicated.
+
+use std::rand::rustrt;
 use std::vec;
 use std::vec::MutableCloneableVector;
 
+use base64;
+use base64::ToBase64;
 use cryptoutil::{read_u32v_le, read_u32_le, write_u32_le};
 use hmac::Hmac;
-use mac::Mac;
 use pbkdf2::pbkdf2;
 use sha2::Sha256;
 
+// The maximum amount of memory to allocate. This is somewhat arbitrarily chosen, but 1GB should be
+// plently for the forseable future.
+static MAX_MEM: u32 = 1 << 30;
 
 // The salsa20/8 core function.
 fn salsa20_8(input: &[u8], output: &mut [u8]) {
@@ -71,17 +89,16 @@ fn salsa20_8(input: &[u8], output: &mut [u8]) {
     }
 }
 
-fn xor(x: &[u8], y: &[u8], t: &mut [u8]) {
-    assert!(x.len() == y.len());
-    for i in range(0, t.len()) {
-        t[i] = x[i] ^ y[i];
+fn xor(x: &[u8], y: &[u8], output: &mut [u8]) {
+    for i in range(0, output.len()) {
+        output[i] = x[i] ^ y[i];
     }
 }
 
+// Execute the BlockMix operation
+// input - the input vector. The length must be a multiple of 128.
+// output - the output vector. Must be the same length as input.
 fn scrypt_block_mix(input: &[u8], output: &mut [u8]) {
-    assert!(input.len() == output.len());
-    assert!(input.len() % 128 == 0);
-
     let mut x = [0u8, ..64];
     x.copy_from(input.slice_from(input.len() - 64));
 
@@ -95,6 +112,11 @@ fn scrypt_block_mix(input: &[u8], output: &mut [u8]) {
     }
 }
 
+// Execute the ROMix operation in-place.
+// b - the data to operate on
+// v - a temporary variable to store the vector V
+// t - a temporary variable to store the result of the xor
+// n - the scrypt parameter N
 fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], t: &mut [u8], n: u32) {
     fn integerify(x: &[u8], n: u32) -> u32 {
         // n is a power of 2, so n - 1 gives us a bitmask that we can use to perform a calculation
@@ -119,46 +141,79 @@ fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], t: &mut [u8], n: u32) {
     }
 }
 
+/**
+ * The Scrypt parameter values.
+ */
+pub struct ScryptParams {
+    priv n: u32,
+    priv r: u32,
+    priv p: u32
+}
 
+impl ScryptParams {
+    /**
+     * Create a new instance of the ScryptParams
+     *
+     * # Arguments
+     *
+     * * n - The Scrypt parameter N
+     * * r - The Scrypt parameter r
+     * * p - The Scrypt parameter p
+     *
+     */
+    pub fn new(n: u32, r: u32, p: u32) -> ScryptParams {
+        assert!(r > 0);
+        assert!(p > 0);
+
+        // check that n > 1 and that n is a power of 2
+        assert!(n > 1 && (n & (n - 1)) == 0);
+
+        // check: n < 2^(128 * r / 8)
+        // 2^(128 * 2 / 8) = 2^32. n must be less than that since its a u32, so, we can skip
+        // this check except when r == 1.
+        if r == 1 {
+            assert!(n < (1 << 16))
+        }
+
+        // check: p <= ((2^32-1) * 32) / (128 * r)
+        // It takes a bit of re-arranging to get the check above into this form, but, it is indeed
+        // the same.
+        assert!((r as u64) * (p as u64) < (1 << 30));
+
+        // Check that we won't attempt to allocate too much memory (or get an integer overflow while
+        // trying to).
+        // We know that p * r won't overflow from the previous checks.
+        assert!(p * r <= MAX_MEM / 128);
+        assert!(r <= MAX_MEM / 128 / n);
+
+        return ScryptParams {
+            n: n,
+            r: r,
+            p: p
+        };
+    }
+}
+
+/**
+ * The scrypt key derivation function.
+ *
+ * # Arguments
+ *
+ * * password - The password to process as a byte vector
+ * * salt - The salt value to use as a byte vector
+ * * params - The ScryptParams to use
+ * * output - The resulting derived key is returned in this byte vector.
+ *
+ */
 #[cfg(target_word_size = "32")]
 #[cfg(target_word_size = "64")]
-pub fn scrypt(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, output: &mut [u8]) {
-    // There are a variety of places that we need to cast a u32 to a uint. This check disables
-    // scrypt on platforms where that isn't safe for all values. A more elegant solutions would be
-    // to check if its safe for the particular values of interest, although that would be more
-    // complicated. This is why scrypt is only defined on 32-bit and 64-bit platforms at the moment.
+pub fn scrypt(password: &[u8], salt: &[u8], params: &ScryptParams, output: &mut [u8]) {
+    // check output.len() > 0 && output.len() <= (2^32 - 1) * 32
+    assert!(output.len() > 0 && output.len() / 32 <= 0xffffffff);
 
-    // The maximum amount of memory to allocate. This is somewhat arbitrarily chosen, but 1GB should
-    // be plently for the forseable future.
-    static MAX_MEM: u32 = 1 << 30;
-
-    assert!(r > 0);
-    assert!(p > 0);
-    assert!(output.len() > 0);
-
-    // check that n > 1 and that n is a power of 2
-    assert!(n > 1 && (n & (n - 1)) == 0);
-
-    // check: n < 2^(128 * r / 8)
-    // 2^(128 * 2 / 8) = 2^32. n must be less than that since its a u32, so, we can skip
-    // this check except when r == 1.
-    if r == 1 {
-        assert!(n < (1 << 16))
-    }
-
-    // check: p <= ((2^32-1) * 32) / (128 * r)
-    // It takes a bit of re-arranging to get the check above into this form, but, it is indeed the
-    // same.
-    assert!((r as u64) * (p as u64) < (1 << 30));
-
-    // check output.len() <= (2^32 - 1) * 32
-    assert!(output.len() / 32 <= 0xffffffff);
-
-    // Check that we won't attempt to allocate too much memory (or get an integer overflow while
-    // trying to).
-    // We know that p * r won't overflow from the previous checks.
-    assert!(p * r <= MAX_MEM / 128);
-    assert!(r <= MAX_MEM / 128 / n);
+    let n = params.n;
+    let r = params.r;
+    let p = params.p;
 
     let mut mac = Hmac::new(Sha256::new(), password);
 
@@ -176,120 +231,69 @@ pub fn scrypt(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, output: &mut
     pbkdf2(&mut mac, b, 1, output);
 }
 
-#[cfg(test)]
-#[test]
-fn test_scrypt_ro_mix() {
-    let input: [u8, ..128] = [
-        0xf7, 0xce, 0x0b, 0x65, 0x3d, 0x2d, 0x72, 0xa4,
-        0x10, 0x8c, 0xf5, 0xab, 0xe9, 0x12, 0xff, 0xdd,
-        0x77, 0x76, 0x16, 0xdb, 0xbb, 0x27, 0xa7, 0x0e,
-        0x82, 0x04, 0xf3, 0xae, 0x2d, 0x0f, 0x6f, 0xad,
-        0x89, 0xf6, 0x8f, 0x48, 0x11, 0xd1, 0xe8, 0x7b,
-        0xcc, 0x3b, 0xd7, 0x40, 0x0a, 0x9f, 0xfd, 0x29,
-        0x09, 0x4f, 0x01, 0x84, 0x63, 0x95, 0x74, 0xf3,
-        0x9a, 0xe5, 0xa1, 0x31, 0x52, 0x17, 0xbc, 0xd7,
-        0x89, 0x49, 0x91, 0x44, 0x72, 0x13, 0xbb, 0x22,
-        0x6c, 0x25, 0xb5, 0x4d, 0xa8, 0x63, 0x70, 0xfb,
-        0xcd, 0x98, 0x43, 0x80, 0x37, 0x46, 0x66, 0xbb,
-        0x8f, 0xfc, 0xb5, 0xbf, 0x40, 0xc2, 0x54, 0xb0,
-        0x67, 0xd2, 0x7c, 0x51, 0xce, 0x4a, 0xd5, 0xfe,
-        0xd8, 0x29, 0xc9, 0x0b, 0x50, 0x5a, 0x57, 0x1b,
-        0x7f, 0x4d, 0x1c, 0xad, 0x6a, 0x52, 0x3c, 0xda,
-        0x77, 0x0e, 0x67, 0xbc, 0xea, 0xaf, 0x7e, 0x89 ];
-    let expected: [u8, ..128] = [
-        0x79, 0xcc, 0xc1, 0x93, 0x62, 0x9d, 0xeb, 0xca,
-        0x04, 0x7f, 0x0b, 0x70, 0x60, 0x4b, 0xf6, 0xb6,
-        0x2c, 0xe3, 0xdd, 0x4a, 0x96, 0x26, 0xe3, 0x55,
-        0xfa, 0xfc, 0x61, 0x98, 0xe6, 0xea, 0x2b, 0x46,
-        0xd5, 0x84, 0x13, 0x67, 0x3b, 0x99, 0xb0, 0x29,
-        0xd6, 0x65, 0xc3, 0x57, 0x60, 0x1f, 0xb4, 0x26,
-        0xa0, 0xb2, 0xf4, 0xbb, 0xa2, 0x00, 0xee, 0x9f,
-        0x0a, 0x43, 0xd1, 0x9b, 0x57, 0x1a, 0x9c, 0x71,
-        0xef, 0x11, 0x42, 0xe6, 0x5d, 0x5a, 0x26, 0x6f,
-        0xdd, 0xca, 0x83, 0x2c, 0xe5, 0x9f, 0xaa, 0x7c,
-        0xac, 0x0b, 0x9c, 0xf1, 0xbe, 0x2b, 0xff, 0xca,
-        0x30, 0x0d, 0x01, 0xee, 0x38, 0x76, 0x19, 0xc4,
-        0xae, 0x12, 0xfd, 0x44, 0x38, 0xf2, 0x03, 0xa0,
-        0xe4, 0xe1, 0xc4, 0x7e, 0xc3, 0x14, 0x86, 0x1f,
-        0x4e, 0x90, 0x87, 0xcb, 0x33, 0x39, 0x6a, 0x68,
-        0x73, 0xe8, 0xf9, 0xd2, 0x53, 0x9a, 0x4b, 0x8e ];
-    let n: u32 = 16;
-    let mut result = [0u8, ..128];
-    result.copy_from(input);
-    let mut v = vec::from_elem(result.len() * (n as uint), 0u8);
-    let mut t = vec::from_elem(128, 0u8);
-    scrypt_ro_mix(result, v, t, n);
-    assert!(result == expected);
+#[fixed_stack_segment]
+fn secure_rand(output: &mut [u8]) {
+    // TODO - Add a note to the rand_gen_seed() function that it must return a cryptographically
+    // strong random value. Also, check to see if the current implementation does that!
+    unsafe {
+        rustrt::rand_gen_seed(output.unsafe_mut_ref(0), output.len() as u64);
+    }
 }
 
-#[cfg(test)]
-#[test]
-fn test_scrypt_block_mix() {
-    let input: [u8, ..128] = [
-        0xf7, 0xce, 0x0b, 0x65, 0x3d, 0x2d, 0x72, 0xa4,
-        0x10, 0x8c, 0xf5, 0xab, 0xe9, 0x12, 0xff, 0xdd,
-        0x77, 0x76, 0x16, 0xdb, 0xbb, 0x27, 0xa7, 0x0e,
-        0x82, 0x04, 0xf3, 0xae, 0x2d, 0x0f, 0x6f, 0xad,
-        0x89, 0xf6, 0x8f, 0x48, 0x11, 0xd1, 0xe8, 0x7b,
-        0xcc, 0x3b, 0xd7, 0x40, 0x0a, 0x9f, 0xfd, 0x29,
-        0x09, 0x4f, 0x01, 0x84, 0x63, 0x95, 0x74, 0xf3,
-        0x9a, 0xe5, 0xa1, 0x31, 0x52, 0x17, 0xbc, 0xd7,
-        0x89, 0x49, 0x91, 0x44, 0x72, 0x13, 0xbb, 0x22,
-        0x6c, 0x25, 0xb5, 0x4d, 0xa8, 0x63, 0x70, 0xfb,
-        0xcd, 0x98, 0x43, 0x80, 0x37, 0x46, 0x66, 0xbb,
-        0x8f, 0xfc, 0xb5, 0xbf, 0x40, 0xc2, 0x54, 0xb0,
-        0x67, 0xd2, 0x7c, 0x51, 0xce, 0x4a, 0xd5, 0xfe,
-        0xd8, 0x29, 0xc9, 0x0b, 0x50, 0x5a, 0x57, 0x1b,
-        0x7f, 0x4d, 0x1c, 0xad, 0x6a, 0x52, 0x3c, 0xda,
-        0x77, 0x0e, 0x67, 0xbc, 0xea, 0xaf, 0x7e, 0x89 ];
-    let expected: [u8, ..128] = [
-        0xa4, 0x1f, 0x85, 0x9c, 0x66, 0x08, 0xcc, 0x99,
-        0x3b, 0x81, 0xca, 0xcb, 0x02, 0x0c, 0xef, 0x05,
-        0x04, 0x4b, 0x21, 0x81, 0xa2, 0xfd, 0x33, 0x7d,
-        0xfd, 0x7b, 0x1c, 0x63, 0x96, 0x68, 0x2f, 0x29,
-        0xb4, 0x39, 0x31, 0x68, 0xe3, 0xc9, 0xe6, 0xbc,
-        0xfe, 0x6b, 0xc5, 0xb7, 0xa0, 0x6d, 0x96, 0xba,
-        0xe4, 0x24, 0xcc, 0x10, 0x2c, 0x91, 0x74, 0x5c,
-        0x24, 0xad, 0x67, 0x3d, 0xc7, 0x61, 0x8f, 0x81,
-        0x20, 0xed, 0xc9, 0x75, 0x32, 0x38, 0x81, 0xa8,
-        0x05, 0x40, 0xf6, 0x4c, 0x16, 0x2d, 0xcd, 0x3c,
-        0x21, 0x07, 0x7c, 0xfe, 0x5f, 0x8d, 0x5f, 0xe2,
-        0xb1, 0xa4, 0x16, 0x8f, 0x95, 0x36, 0x78, 0xb7,
-        0x7d, 0x3b, 0x3d, 0x80, 0x3b, 0x60, 0xe4, 0xab,
-        0x92, 0x09, 0x96, 0xe5, 0x9b, 0x4d, 0x53, 0xb6,
-        0x5d, 0x2a, 0x22, 0x58, 0x77, 0xd5, 0xed, 0xf5,
-        0x84, 0x2c, 0xb9, 0xf1, 0x4e, 0xef, 0xe4, 0x25 ];
-    let mut result = [0u8, ..128];
-    scrypt_block_mix(input, result);
-    assert!(result == expected);
+/**
+ * scrypt_simple is a helper function that should be sufficient for the majority of cases where
+ * an application needs to use Scrypt to hash a password for storage. The result is a ~str that
+ * contains the parameters used as part of its encoding. The scrypt_check function may be used on
+ * a password to check if it is equal to hashed value.
+ *
+ * # Arguments
+ *
+ * * password - The password to process as a str
+ * * params - The ScryptParams to use
+ *
+ */
+#[cfg(target_word_size = "32")]
+#[cfg(target_word_size = "64")]
+pub fn scrypt_simple(password: &str, params: &ScryptParams) -> ~str {
+    // 128-bit salt
+    let mut salt = [0u8, ..16];
+    secure_rand(salt);
+
+    // 256-bit derived key
+    let mut dk = [0u8, ..32];
+
+    scrypt(password.as_bytes(), salt, params, dk);
+
+    // TODO - Make this format more compact by restricting the value of N, r, and p?
+
+    let mut result = ~"$0$";
+    let tmp = [0u8, ..12];
+    write_u32_le(tmp.mut_slice(0, 4), params.n);
+    write_u32_le(tmp.mut_slice(4, 8), params.r);
+    write_u32_le(tmp.mut_slice(8, 12), params.p);
+    result.push_str(tmp.slice_to(tmp.len()).to_base64(base64::STANDARD));
+    result.push_char('$');
+    result.push_str(salt.slice_to(salt.len()).to_base64(base64::STANDARD));
+    result.push_char('$');
+    result.push_str(dk.slice_to(dk.len()).to_base64(base64::STANDARD));
+
+    return result;
 }
 
-#[cfg(test)]
-#[test]
-fn test_salsa20_8() {
-    let input: [u8, ..64] = [
-        0x7e, 0x87, 0x9a, 0x21, 0x4f, 0x3e, 0xc9, 0x86,
-        0x7c, 0xa9, 0x40, 0xe6, 0x41, 0x71, 0x8f, 0x26,
-        0xba, 0xee, 0x55, 0x5b, 0x8c, 0x61, 0xc1, 0xb5,
-        0x0d, 0xf8, 0x46, 0x11, 0x6d, 0xcd, 0x3b, 0x1d,
-        0xee, 0x24, 0xf3, 0x19, 0xdf, 0x9b, 0x3d, 0x85,
-        0x14, 0x12, 0x1e, 0x4b, 0x5a, 0xc5, 0xaa, 0x32,
-        0x76, 0x02, 0x1d, 0x29, 0x09, 0xc7, 0x48, 0x29,
-        0xed, 0xeb, 0xc6, 0x8d, 0xb8, 0xb8, 0xc2, 0x5e ];
-    let expected: [u8, ..64] = [
-        0xa4, 0x1f, 0x85, 0x9c, 0x66, 0x08, 0xcc, 0x99,
-        0x3b, 0x81, 0xca, 0xcb, 0x02, 0x0c, 0xef, 0x05,
-        0x04, 0x4b, 0x21, 0x81, 0xa2, 0xfd, 0x33, 0x7d,
-        0xfd, 0x7b, 0x1c, 0x63, 0x96, 0x68, 0x2f, 0x29,
-        0xb4, 0x39, 0x31, 0x68, 0xe3, 0xc9, 0xe6, 0xbc,
-        0xfe, 0x6b, 0xc5, 0xb7, 0xa0, 0x6d, 0x96, 0xba,
-        0xe4, 0x24, 0xcc, 0x10, 0x2c, 0x91, 0x74, 0x5c,
-        0x24, 0xad, 0x67, 0x3d, 0xc7, 0x61, 0x8f, 0x81 ];
-    let mut result = [0u8, ..64];
-
-    salsa20_8(input, result);
-
-    assert!(result == expected);
+/**
+ * scrypt_check compared a password against the result of a previous call to scrypt_simple and
+ * returns true if the passed in password hashes to the same value.
+ *
+ * # Arguments
+ *
+ * * password - The password to process as a str
+ * * hashed_value - The result of a previous call to scrypt_simple()
+ *
+ */
+#[cfg(target_word_size = "32")]
+#[cfg(target_word_size = "64")]
+pub fn scrypt_check(password: &str, hashed_value: &str) -> bool {
+    fail!();
 }
 
 #[cfg(test, target_word_size = "32")]
@@ -297,8 +301,7 @@ fn test_salsa20_8() {
 mod test {
     use std::vec;
 
-    use scrypt::scrypt;
-
+    use scrypt::{scrypt, scrypt_simple, ScryptParams};
 
     struct Test {
         password: ~str,
@@ -309,6 +312,7 @@ mod test {
         expected: ~[u8]
     }
 
+    // Test vectors from [1]. The last test vector is omitted because it takes too long to run.
 
     fn tests() -> ~[Test] {
         return ~[
@@ -360,23 +364,6 @@ mod test {
                     0xe6, 0x1e, 0x85, 0xdc, 0x0d, 0x65, 0x1e, 0x40,
                     0xdf, 0xcf, 0x01, 0x7b, 0x45, 0x57, 0x58, 0x87 ]
             },
-// Too slow!
-//             Test {
-//                 password: ~"pleaseletmein",
-//                 salt: ~"SodiumChloride",
-//                 n: 1048576,
-//                 r: 8,
-//                 p: 1,
-//                 expected: ~[
-//                     0x21, 0x01, 0xcb, 0x9b, 0x6a, 0x51, 0x1a, 0xae,
-//                     0xad, 0xdb, 0xbe, 0x09, 0xcf, 0x70, 0xf8, 0x81,
-//                     0xec, 0x56, 0x8d, 0x57, 0x4a, 0x2f, 0xfd, 0x4d,
-//                     0xab, 0xe5, 0xee, 0x98, 0x20, 0xad, 0xaa, 0x47,
-//                     0x8e, 0x56, 0xfd, 0x8f, 0x4b, 0xa5, 0xd0, 0x9f,
-//                     0xfa, 0x1c, 0x6d, 0x92, 0x7c, 0x40, 0xf4, 0xc3,
-//                     0x37, 0x30, 0x40, 0x49, 0xe8, 0xa9, 0x52, 0xfb,
-//                     0xcb, 0xf4, 0x5c, 0x6f, 0xa7, 0x7a, 0x41, 0xa4 ]
-//             }
         ];
     }
 
@@ -385,8 +372,17 @@ mod test {
         let tests = tests();
         for t in tests.iter() {
             let mut result = vec::from_elem(t.expected.len(), 0u8);
-            scrypt(t.password.as_bytes(), t.salt.as_bytes(), t.n, t.r, t.p, result);
+            let params = ScryptParams::new(t.n, t.r, t.p);
+            scrypt(t.password.as_bytes(), t.salt.as_bytes(), &params, result);
             assert!(result == t.expected);
         }
+    }
+
+    #[test]
+    fn test_scrypt_simple() {
+        let params = ScryptParams::new(1024, 8, 1);
+        let out1 = scrypt_simple("password", &params);
+        let out2 = scrypt_simple("password", &params);
+        assert!(out1 != out2);
     }
 }
