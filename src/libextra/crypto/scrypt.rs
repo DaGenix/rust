@@ -19,7 +19,7 @@ use sha2::Sha256;
 
 
 // The salsa20/8 core function.
-fn salsa20_8(output: &mut [u8], input: &[u8]) {
+fn salsa20_8(input: &[u8], output: &mut [u8]) {
     fn rot(a: u32, b: uint) -> u32 {
         return (a << b) | (a >> (32 - b));
     }
@@ -89,42 +89,87 @@ fn scrypt_block_mix(input: &[u8], output: &mut [u8]) {
 
     for i in range(0, input.len() / 64) {
         xor(x, input.slice(i * 64, (i + 1) * 64), t);
-        salsa20_8(x, t);
+        salsa20_8(t, x);
         let pos = if i % 2 == 0 { (i / 2) * 64 } else { (i / 2) * 64 + input.len() / 2 };
         output.mut_slice(pos, pos + 64).copy_from(x);
     }
 }
 
-fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], t: &mut [u8], n: uint) {
+fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], t: &mut [u8], n: u32) {
+    fn integerify(x: &[u8], n: u32) -> u32 {
+        // n is a power of 2, so n - 1 gives us a bitmask that we can use to perform a calculation
+        // mod n using a simple bitwise and.
+        let mask = n - 1;
+        return read_u32_le(x.slice(x.len() - 64, x.len() - 60)) & mask;
+    }
+
     let len = b.len();
 
-    for i in range(0, n) {
+    for i in range(0, n as uint) {
         let tmp = v.mut_slice(i * len, (i + 1) * len);
         tmp.copy_from(b);
         scrypt_block_mix(tmp, b);
     }
 
-    let mask = (n - 1) as u32;
-
-    do n.times() {
-        let j = read_u32_le(b.slice(len - 64, len - 60)) & mask;
+    do (n as uint).times() {
+        let j = integerify(b, n);
+        // j as uint won't overflow since we've already check that values mod n fit into a uint.
         xor(b, v.slice((j as uint) * len, ((j + 1) as uint) * len), t);
         scrypt_block_mix(t, b);
     }
 }
 
 
-pub fn scrypt(password: &[u8], salt: &[u8], n: uint, r: uint, p: uint, output: &mut [u8]) {
+#[cfg(target_word_size = "32")]
+#[cfg(target_word_size = "64")]
+pub fn scrypt(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, output: &mut [u8]) {
+    // There are a variety of places that we need to cast a u32 to a uint. This check disables
+    // scrypt on platforms where that isn't safe for all values. A more elegant solutions would be
+    // to check if its safe for the particular values of interest, although that would be more
+    // complicated. This is why scrypt is only defined on 32-bit and 64-bit platforms at the moment.
+
+    // The maximum amount of memory to allocate. This is somewhat arbitrarily chosen, but 1GB should
+    // be plently for the forseable future.
+    static MAX_MEM: u32 = 1 << 30;
+
+    assert!(r > 0);
+    assert!(p > 0);
+    assert!(output.len() > 0);
+
+    // check that n > 1 and that n is a power of 2
+    assert!(n > 1 && (n & (n - 1)) == 0);
+
+    // check: n < 2^(128 * r / 8)
+    // 2^(128 * 2 / 8) = 2^32. n must be less than that since its a u32, so, we can skip
+    // this check except when r == 1.
+    if r == 1 {
+        assert!(n < (1 << 16))
+    }
+
+    // check: p <= ((2^32-1) * 32) / (128 * r)
+    // It takes a bit of re-arranging to get the check above into this form, but, it is indeed the
+    // same.
+    assert!((r as u64) * (p as u64) < (1 << 30));
+
+    // check output.len() <= (2^32 - 1) * 32
+    assert!(output.len() / 32 <= 0xffffffff);
+
+    // Check that we won't attempt to allocate too much memory (or get an integer overflow while
+    // trying to).
+    // We know that p * r won't overflow from the previous checks.
+    assert!(p * r <= MAX_MEM / 128);
+    assert!(r <= MAX_MEM / 128 / n);
+
     let mut mac = Hmac::new(Sha256::new(), password);
 
-    let mut b = vec::from_elem(p * r * 128, 0u8);
+    let mut b = vec::from_elem((p * r * 128) as uint, 0u8);
     pbkdf2(&mut mac, salt, 1, b);
 
-    let mut v = vec::from_elem(n * r * 128, 0u8);
-    let mut t = vec::from_elem(r * 128, 0u8);
+    let mut v = vec::from_elem((n * r * 128) as uint, 0u8);
+    let mut t = vec::from_elem((r * 128) as uint, 0u8);
 
-    for i in range(0, p) {
-        let s = b.mut_slice(i * r * 128, (i + 1) * r * 128);
+    for i in range(0, p as uint) {
+        let s = b.mut_slice(i * (r as uint) * 128, (i + 1) * (r as uint) * 128);
         scrypt_ro_mix(s, v, t, n);
     }
 
@@ -168,10 +213,10 @@ fn test_scrypt_ro_mix() {
         0xe4, 0xe1, 0xc4, 0x7e, 0xc3, 0x14, 0x86, 0x1f,
         0x4e, 0x90, 0x87, 0xcb, 0x33, 0x39, 0x6a, 0x68,
         0x73, 0xe8, 0xf9, 0xd2, 0x53, 0x9a, 0x4b, 0x8e ];
-    let n = 16;
+    let n: u32 = 16;
     let mut result = [0u8, ..128];
     result.copy_from(input);
-    let mut v = vec::from_elem(result.len() * n, 0u8);
+    let mut v = vec::from_elem(result.len() * (n as uint), 0u8);
     let mut t = vec::from_elem(128, 0u8);
     scrypt_ro_mix(result, v, t, n);
     assert!(result == expected);
@@ -242,12 +287,13 @@ fn test_salsa20_8() {
         0x24, 0xad, 0x67, 0x3d, 0xc7, 0x61, 0x8f, 0x81 ];
     let mut result = [0u8, ..64];
 
-    salsa20_8(result, input);
+    salsa20_8(input, result);
 
     assert!(result == expected);
 }
 
-#[cfg(test)]
+#[cfg(test, target_word_size = "32")]
+#[cfg(test, target_word_size = "64")]
 mod test {
     use std::vec;
 
@@ -257,9 +303,9 @@ mod test {
     struct Test {
         password: ~str,
         salt: ~str,
-        n: uint,
-        r: uint,
-        p: uint,
+        n: u32,
+        r: u32,
+        p: u32,
         expected: ~[u8]
     }
 
