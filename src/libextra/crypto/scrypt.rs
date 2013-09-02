@@ -11,26 +11,23 @@
 use std::vec;
 use std::vec::MutableCloneableVector;
 
-use cryptoutil::{read_u32v_le, write_u32_le};
+use cryptoutil::{read_u32v_le, read_u32_le, write_u32_le};
 use hmac::Hmac;
 use mac::Mac;
 use pbkdf2::pbkdf2;
 use sha2::Sha256;
 
 
-// Perform a number of rounds of the salsa20 core function.
-fn salsa20_x(output: &mut [u8], input: &[u8], rounds: uint) {
+// The salsa20/8 core function.
+fn salsa20_8(output: &mut [u8], input: &[u8]) {
     fn rot(a: u32, b: uint) -> u32 {
         return (a << b) | (a >> (32 - b));
     }
 
-    assert!(rounds % 2 == 0);
-
     let mut x = [0u32, ..16];
-    let mut y = [0u32, ..16];
-
     read_u32v_le(x, input);
-    y.copy_from(x);
+
+    let rounds = 8;
 
     do (rounds / 2).times() {
         x[0x4] ^= rot(x[0x0] + x[0xc], 7);
@@ -67,55 +64,38 @@ fn salsa20_x(output: &mut [u8], input: &[u8], rounds: uint) {
         x[0xf] ^= rot(x[0xe] + x[0xd], 18);
     }
 
-    // TODO - write_u32v_le()?
-    for j in range(0u, 16) {
-        write_u32_le(output.mut_slice(j * 4, j * 4 + 4), x[j] + y[j]);
+    for i in range(0u, 16) {
+        write_u32_le(
+            output.mut_slice(i * 4, (i + 1) * 4),
+            x[i] + read_u32_le(input.slice(i * 4, (i + 1) * 4)));
+    }
+}
+
+fn xor(x: &[u8], y: &[u8], t: &mut [u8]) {
+    assert!(x.len() == y.len());
+    for i in range(0, t.len()) {
+        t[i] = x[i] ^ y[i];
     }
 }
 
 fn scrypt_block_mix(input: &[u8], output: &mut [u8]) {
-    fn xor64(x: &[u8], y: &[u8]) -> [u8, ..64] {
-        let mut out = [0u8, ..64];
-        for i in range(0, 64) {
-            out[i] = x[i] ^ y[i];
-        }
-        return out;
-    }
-
     assert!(input.len() == output.len());
     assert!(input.len() % 128 == 0);
 
-    let r = input.len() / 128;
-
     let mut x = [0u8, ..64];
-    x.copy_from(input.slice_from((2 * r - 1) * 64));
+    x.copy_from(input.slice_from(input.len() - 64));
 
-    for i in range(0, 2 * r) {
-        let t = xor64(x, input.slice(i * 64, i * 64 + 64));
-        salsa20_x(x, t, 8);
-        let pos = if i % 2 == 0 {
-            (i / 2) * 64
-        } else {
-            ((i - 1) / 2) * 64 + r * 64
-        };
+    let mut t = [0u8, ..64];
+
+    for i in range(0, input.len() / 64) {
+        xor(x, input.slice(i * 64, (i + 1) * 64), t);
+        salsa20_8(x, t);
+        let pos = if i % 2 == 0 { (i / 2) * 64 } else { (i / 2) * 64 + input.len() / 2 };
         output.mut_slice(pos, pos + 64).copy_from(x);
     }
 }
 
 fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], t: &mut [u8], n: uint) {
-    fn read_u32_le(x: &[u8]) -> u32 {
-        let mut out = [0u32];
-        read_u32v_le(out, x);
-        return out[0];
-    }
-
-    fn xor(x: &[u8], y: &[u8], t: &mut [u8]) {
-        assert!(x.len() == y.len());
-        for i in range(0, t.len()) {
-            t[i] = x[i] ^ y[i];
-        }
-    }
-
     let len = b.len();
 
     for i in range(0, n) {
@@ -124,8 +104,10 @@ fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], t: &mut [u8], n: uint) {
         scrypt_block_mix(tmp, b);
     }
 
+    let mask = (n - 1) as u32;
+
     do n.times() {
-        let j = read_u32_le(b.slice(len - 64, len - 60)) & ((n - 1) as u32);
+        let j = read_u32_le(b.slice(len - 64, len - 60)) & mask;
         xor(b, v.slice((j as uint) * len, ((j + 1) as uint) * len), t);
         scrypt_block_mix(t, b);
     }
@@ -260,7 +242,7 @@ fn test_salsa20_8() {
         0x24, 0xad, 0x67, 0x3d, 0xc7, 0x61, 0x8f, 0x81 ];
     let mut result = [0u8, ..64];
 
-    salsa20_x(result, input, 8);
+    salsa20_8(result, input);
 
     assert!(result == expected);
 }
@@ -333,22 +315,22 @@ mod test {
                     0xdf, 0xcf, 0x01, 0x7b, 0x45, 0x57, 0x58, 0x87 ]
             },
 // Too slow!
-            Test {
-                password: ~"pleaseletmein",
-                salt: ~"SodiumChloride",
-                n: 1048576,
-                r: 8,
-                p: 1,
-                expected: ~[
-                    0x21, 0x01, 0xcb, 0x9b, 0x6a, 0x51, 0x1a, 0xae,
-                    0xad, 0xdb, 0xbe, 0x09, 0xcf, 0x70, 0xf8, 0x81,
-                    0xec, 0x56, 0x8d, 0x57, 0x4a, 0x2f, 0xfd, 0x4d,
-                    0xab, 0xe5, 0xee, 0x98, 0x20, 0xad, 0xaa, 0x47,
-                    0x8e, 0x56, 0xfd, 0x8f, 0x4b, 0xa5, 0xd0, 0x9f,
-                    0xfa, 0x1c, 0x6d, 0x92, 0x7c, 0x40, 0xf4, 0xc3,
-                    0x37, 0x30, 0x40, 0x49, 0xe8, 0xa9, 0x52, 0xfb,
-                    0xcb, 0xf4, 0x5c, 0x6f, 0xa7, 0x7a, 0x41, 0xa4 ]
-            }
+//             Test {
+//                 password: ~"pleaseletmein",
+//                 salt: ~"SodiumChloride",
+//                 n: 1048576,
+//                 r: 8,
+//                 p: 1,
+//                 expected: ~[
+//                     0x21, 0x01, 0xcb, 0x9b, 0x6a, 0x51, 0x1a, 0xae,
+//                     0xad, 0xdb, 0xbe, 0x09, 0xcf, 0x70, 0xf8, 0x81,
+//                     0xec, 0x56, 0x8d, 0x57, 0x4a, 0x2f, 0xfd, 0x4d,
+//                     0xab, 0xe5, 0xee, 0x98, 0x20, 0xad, 0xaa, 0x47,
+//                     0x8e, 0x56, 0xfd, 0x8f, 0x4b, 0xa5, 0xd0, 0x9f,
+//                     0xfa, 0x1c, 0x6d, 0x92, 0x7c, 0x40, 0xf4, 0xc3,
+//                     0x37, 0x30, 0x40, 0x49, 0xe8, 0xa9, 0x52, 0xfb,
+//                     0xcb, 0xf4, 0x5c, 0x6f, 0xa7, 0x7a, 0x41, 0xa4 ]
+//             }
         ];
     }
 
