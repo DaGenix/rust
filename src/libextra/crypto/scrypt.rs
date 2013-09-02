@@ -102,20 +102,18 @@ fn scrypt_block_mix(input: &[u8], output: &mut [u8]) {
     }
 }
 
-fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], n: uint) {
+fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], t: &mut [u8], n: uint) {
     fn read_u32_le(x: &[u8]) -> u32 {
         let mut out = [0u32];
         read_u32v_le(out, x);
         return out[0];
     }
 
-    fn xor(x: &[u8], y: &[u8]) -> ~[u8] {
+    fn xor(x: &[u8], y: &[u8], t: &mut [u8]) {
         assert!(x.len() == y.len());
-        let mut out = vec::from_elem(x.len(), 0u8);
-        for i in range(0, out.len()) {
-            out[i] = x[i] ^ y[i];
+        for i in range(0, t.len()) {
+            t[i] = x[i] ^ y[i];
         }
-        return out;
     }
 
     let len = b.len();
@@ -128,7 +126,7 @@ fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], n: uint) {
 
     do n.times() {
         let j = read_u32_le(b.slice(len - 64, len - 60)) & ((n - 1) as u32);
-        let t = xor(b, v.slice((j as uint) * len, ((j + 1) as uint) * len));
+        xor(b, v.slice((j as uint) * len, ((j + 1) as uint) * len), t);
         scrypt_block_mix(t, b);
     }
 }
@@ -141,14 +139,11 @@ pub fn scrypt(password: &[u8], salt: &[u8], n: uint, r: uint, p: uint, output: &
     pbkdf2(&mut mac, salt, 1, b);
 
     let mut v = vec::from_elem(n * r * 128, 0u8);
+    let mut t = vec::from_elem(r * 128, 0u8);
 
     for i in range(0, p) {
-//         let mut tmp = vec::from_elem(r * 128, 0u8);
-//         let s = b.mut_slice(i * r * 128, (i + 1) * r * 128);
-//         scrypt_ro_mix(s, tmp, n);
-//         s.copy_from(tmp);
         let s = b.mut_slice(i * r * 128, (i + 1) * r * 128);
-        scrypt_ro_mix(s, v, n);
+        scrypt_ro_mix(s, v, t, n);
     }
 
     pbkdf2(&mut mac, b, 1, output);
@@ -193,10 +188,10 @@ fn test_scrypt_ro_mix() {
         0x73, 0xe8, 0xf9, 0xd2, 0x53, 0x9a, 0x4b, 0x8e ];
     let n = 16;
     let mut result = [0u8, ..128];
-//     scrypt_ro_mix(input, result, 16);
     result.copy_from(input);
     let mut v = vec::from_elem(result.len() * n, 0u8);
-    scrypt_ro_mix(result, v, n);
+    let mut t = vec::from_elem(128, 0u8);
+    scrypt_ro_mix(result, v, t, n);
     assert!(result == expected);
 }
 
@@ -338,22 +333,22 @@ mod test {
                     0xdf, 0xcf, 0x01, 0x7b, 0x45, 0x57, 0x58, 0x87 ]
             },
 // Too slow!
-//             Test {
-//                 password: ~"pleaseletmein",
-//                 salt: ~"SodiumChloride",
-//                 n: 1048576,
-//                 r: 8,
-//                 p: 1,
-//                 expected: ~[
-//                     0x21, 0x01, 0xcb, 0x9b, 0x6a, 0x51, 0x1a, 0xae,
-//                     0xad, 0xdb, 0xbe, 0x09, 0xcf, 0x70, 0xf8, 0x81,
-//                     0xec, 0x56, 0x8d, 0x57, 0x4a, 0x2f, 0xfd, 0x4d,
-//                     0xab, 0xe5, 0xee, 0x98, 0x20, 0xad, 0xaa, 0x47,
-//                     0x8e, 0x56, 0xfd, 0x8f, 0x4b, 0xa5, 0xd0, 0x9f,
-//                     0xfa, 0x1c, 0x6d, 0x92, 0x7c, 0x40, 0xf4, 0xc3,
-//                     0x37, 0x30, 0x40, 0x49, 0xe8, 0xa9, 0x52, 0xfb,
-//                     0xcb, 0xf4, 0x5c, 0x6f, 0xa7, 0x7a, 0x41, 0xa4 ]
-//             }
+            Test {
+                password: ~"pleaseletmein",
+                salt: ~"SodiumChloride",
+                n: 1048576,
+                r: 8,
+                p: 1,
+                expected: ~[
+                    0x21, 0x01, 0xcb, 0x9b, 0x6a, 0x51, 0x1a, 0xae,
+                    0xad, 0xdb, 0xbe, 0x09, 0xcf, 0x70, 0xf8, 0x81,
+                    0xec, 0x56, 0x8d, 0x57, 0x4a, 0x2f, 0xfd, 0x4d,
+                    0xab, 0xe5, 0xee, 0x98, 0x20, 0xad, 0xaa, 0x47,
+                    0x8e, 0x56, 0xfd, 0x8f, 0x4b, 0xa5, 0xd0, 0x9f,
+                    0xfa, 0x1c, 0x6d, 0x92, 0x7c, 0x40, 0xf4, 0xc3,
+                    0x37, 0x30, 0x40, 0x49, 0xe8, 0xa9, 0x52, 0xfb,
+                    0xcb, 0xf4, 0x5c, 0x6f, 0xa7, 0x7a, 0x41, 0xa4 ]
+            }
         ];
     }
 
