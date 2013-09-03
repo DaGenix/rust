@@ -125,8 +125,6 @@ mod test {
     use hmac::Hmac;
     use digest::Digest;
     use md5::Md5;
-    use sha1::Md5;
-    use sha2::Sha256;
 
     fn from_str(input: &str) -> ~[u8] {
         use std::u8;
