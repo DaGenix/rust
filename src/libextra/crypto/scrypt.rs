@@ -27,7 +27,7 @@ use std::vec::MutableCloneableVector;
 
 use base64;
 use base64::{FromBase64, ToBase64};
-use cryptoutil::{read_u32v_le, read_u32_le, write_u32_le};
+use cryptoutil::{read_u32v_le, read_u32_le, write_u32_le, fixed_time_eq};
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
 use sha2::Sha256;
@@ -318,7 +318,7 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> bool {
         Err(y) => fail!(y)
     };
 
-    // Hash value
+    // Hashed value
     let hstr = match iter.next() {
         Some(hstr) => hstr,
         None => fail!()
@@ -337,7 +337,11 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> bool {
     let mut output = vec::from_elem(hash.len(), 0u8);
     scrypt(password.as_bytes(), salt, &params, output);
 
-    return output == hash;
+    // Be careful here - its important that the comparison be done using a fixed time equality
+    // check. Otherwise an adversary that can time how long this step takes can learn about the
+    // hashed value which would allow them to mount an offline brute force attack against the
+    // password.
+    return fixed_time_eq(output, hash);
 }
 
 #[cfg(test, target_word_size = "32")]
