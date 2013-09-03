@@ -21,12 +21,12 @@
 // solution would be to check if its safe for the particular values of interest, although that would
 // be more complicated.
 
-use std::rand::rustrt;
+use std::rand::{IsaacRng, RngUtil};
 use std::vec;
 use std::vec::MutableCloneableVector;
 
 use base64;
-use base64::ToBase64;
+use base64::{FromBase64, ToBase64};
 use cryptoutil::{read_u32v_le, read_u32_le, write_u32_le};
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
@@ -152,7 +152,7 @@ pub struct ScryptParams {
 
 impl ScryptParams {
     /**
-     * Create a new instance of the ScryptParams
+     * Create a new instance of the ScryptParams.
      *
      * # Arguments
      *
@@ -184,6 +184,8 @@ impl ScryptParams {
         // trying to).
         // We know that p * r won't overflow from the previous checks.
         assert!(p * r <= MAX_MEM / 128);
+
+        // XXX / TODO - I don't think this works for very large values of N.
         assert!(r <= MAX_MEM / 128 / n);
 
         return ScryptParams {
@@ -231,15 +233,6 @@ pub fn scrypt(password: &[u8], salt: &[u8], params: &ScryptParams, output: &mut 
     pbkdf2(&mut mac, b, 1, output);
 }
 
-#[fixed_stack_segment]
-fn secure_rand(output: &mut [u8]) {
-    // TODO - Add a note to the rand_gen_seed() function that it must return a cryptographically
-    // strong random value. Also, check to see if the current implementation does that!
-    unsafe {
-        rustrt::rand_gen_seed(output.unsafe_mut_ref(0), output.len() as u64);
-    }
-}
-
 /**
  * scrypt_simple is a helper function that should be sufficient for the majority of cases where
  * an application needs to use Scrypt to hash a password for storage. The result is a ~str that
@@ -255,9 +248,10 @@ fn secure_rand(output: &mut [u8]) {
 #[cfg(target_word_size = "32")]
 #[cfg(target_word_size = "64")]
 pub fn scrypt_simple(password: &str, params: &ScryptParams) -> ~str {
+    let mut rng = IsaacRng::new();
+
     // 128-bit salt
-    let mut salt = [0u8, ..16];
-    secure_rand(salt);
+    let salt = rng.gen_bytes(16);
 
     // 256-bit derived key
     let mut dk = [0u8, ..32];
@@ -266,8 +260,8 @@ pub fn scrypt_simple(password: &str, params: &ScryptParams) -> ~str {
 
     // TODO - Make this format more compact by restricting the value of N, r, and p?
 
-    let mut result = ~"$0$";
-    let tmp = [0u8, ..12];
+    let mut result = ~"0$";
+    let mut tmp = [0u8, ..12];
     write_u32_le(tmp.mut_slice(0, 4), params.n);
     write_u32_le(tmp.mut_slice(4, 8), params.r);
     write_u32_le(tmp.mut_slice(8, 12), params.p);
@@ -281,19 +275,69 @@ pub fn scrypt_simple(password: &str, params: &ScryptParams) -> ~str {
 }
 
 /**
- * scrypt_check compared a password against the result of a previous call to scrypt_simple and
+ * scrypt_check compares a password against the result of a previous call to scrypt_simple and
  * returns true if the passed in password hashes to the same value.
  *
  * # Arguments
  *
  * * password - The password to process as a str
- * * hashed_value - The result of a previous call to scrypt_simple()
+ * * hashed_value - A string representing a hashed password returned by scrypt_simple()
  *
  */
 #[cfg(target_word_size = "32")]
 #[cfg(target_word_size = "64")]
 pub fn scrypt_check(password: &str, hashed_value: &str) -> bool {
-    fail!();
+    let mut iter = hashed_value.split_iter('$');
+
+    // Version - currenlty only version 0 is supported
+    match iter.next() {
+        Some(vstr) => assert!(vstr == "0"),
+        None => fail!()
+    }
+
+    // Parameters
+    let pstr = match iter.next() {
+        Some(pstr) => pstr,
+        None => fail!()
+    };
+    let pvec = match pstr.from_base64() {
+        Ok(x) => x,
+        Err(y) => fail!(y)
+    };
+    let mut pval = [0u32, ..3];
+    read_u32v_le(pval, pvec);
+    let params = ScryptParams::new(pval[0], pval[1], pval[2]);
+
+    // Salt
+    let sstr = match iter.next() {
+        Some(sstr) => sstr,
+        None => fail!()
+    };
+    let salt = match sstr.from_base64() {
+        Ok(x) => x,
+        Err(y) => fail!(y)
+    };
+
+    // Hash value
+    let hstr = match iter.next() {
+        Some(hstr) => hstr,
+        None => fail!()
+    };
+    let hash = match hstr.from_base64() {
+        Ok(x) => x,
+        Err(y) => fail!(y)
+    };
+
+    // Make sure there is no trailing data
+    match iter.next() {
+        Some(_) => fail!(),
+        None => { }
+    }
+
+    let mut output = vec::from_elem(hash.len(), 0u8);
+    scrypt(password.as_bytes(), salt, &params, output);
+
+    return output == hash;
 }
 
 #[cfg(test, target_word_size = "32")]
@@ -301,7 +345,7 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> bool {
 mod test {
     use std::vec;
 
-    use scrypt::{scrypt, scrypt_simple, ScryptParams};
+    use scrypt::{scrypt, scrypt_simple, scrypt_check, ScryptParams};
 
     struct Test {
         password: ~str,
@@ -380,9 +424,14 @@ mod test {
 
     #[test]
     fn test_scrypt_simple() {
-        let params = ScryptParams::new(1024, 8, 1);
-        let out1 = scrypt_simple("password", &params);
-        let out2 = scrypt_simple("password", &params);
+        let password = "password";
+        // These parameters are intentionally quite weak - the goal is to make the test run quickly!
+        let params = ScryptParams::new(128, 8, 1);
+        let out1 = scrypt_simple(password, &params);
+        let out2 = scrypt_simple(password, &params);
         assert!(out1 != out2);
+        assert!(scrypt_check(password, out1));
+        assert!(scrypt_check(password, out2));
+        assert!(!scrypt_check("other", out1));
     }
 }
