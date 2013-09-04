@@ -144,36 +144,38 @@ fn scrypt_ro_mix(b: &mut [u8], v: &mut [u8], t: &mut [u8], n: u32) {
 /**
  * The Scrypt parameter values.
  */
+#[cfg(target_word_size = "32")]
+#[cfg(target_word_size = "64")]
 pub struct ScryptParams {
-    priv n: u32,
+    priv log_n: u32,
     priv r: u32,
     priv p: u32
 }
 
+#[cfg(target_word_size = "32")]
+#[cfg(target_word_size = "64")]
 impl ScryptParams {
     /**
      * Create a new instance of the ScryptParams.
      *
      * # Arguments
      *
-     * * n - The Scrypt parameter N
+     * * log_n - The log2 of the Scrypt parameter N
      * * r - The Scrypt parameter r
      * * p - The Scrypt parameter p
      *
      */
-    pub fn new(n: u32, r: u32, p: u32) -> ScryptParams {
+    pub fn new(log_n: u32, r: u32, p: u32) -> ScryptParams {
+        // The scrypt_simple() and scrypt_check() functions depend on the types of the parameters
+        // and some of the checks here. Don't allow a wider range of parameters without checking
+        // that those functions will still work.
+
         assert!(r > 0);
         assert!(p > 0);
-
-        // check that n > 1 and that n is a power of 2
-        assert!(n > 1 && (n & (n - 1)) == 0);
+        assert!(log_n > 0 && log_n < 32);
 
         // check: n < 2^(128 * r / 8)
-        // 2^(128 * 2 / 8) = 2^32. n must be less than that since its a u32, so, we can skip
-        // this check except when r == 1.
-        if r == 1 {
-            assert!(n < (1 << 16))
-        }
+        assert!(log_n < 128 * r / 8);
 
         // check: p <= ((2^32-1) * 32) / (128 * r)
         // It takes a bit of re-arranging to get the check above into this form, but, it is indeed
@@ -184,12 +186,10 @@ impl ScryptParams {
         // trying to).
         // We know that p * r won't overflow from the previous checks.
         assert!(p * r <= MAX_MEM / 128);
-
-        // XXX / TODO - I don't think this works for very large values of N.
-        assert!(r <= MAX_MEM / 128 / n);
+        assert!(r <= MAX_MEM / 128 >> log_n);
 
         return ScryptParams {
-            n: n,
+            log_n: log_n,
             r: r,
             p: p
         };
@@ -213,7 +213,7 @@ pub fn scrypt(password: &[u8], salt: &[u8], params: &ScryptParams, output: &mut 
     // check output.len() > 0 && output.len() <= (2^32 - 1) * 32
     assert!(output.len() > 0 && output.len() / 32 <= 0xffffffff);
 
-    let n = params.n;
+    let n = (1 << params.log_n);
     let r = params.r;
     let p = params.p;
 
@@ -237,7 +237,18 @@ pub fn scrypt(password: &[u8], salt: &[u8], params: &ScryptParams, output: &mut 
  * scrypt_simple is a helper function that should be sufficient for the majority of cases where
  * an application needs to use Scrypt to hash a password for storage. The result is a ~str that
  * contains the parameters used as part of its encoding. The scrypt_check function may be used on
- * a password to check if it is equal to hashed value.
+ * a password to check if it is equal to a hashed value.
+ *
+ * # Format
+ *
+ * The format of the output is a modified version of the Modular Crypt Format (? ref) that encodes
+ * algorithm used and the parameter values. If all parameter values can each fit within a single
+ * byte, a compact format is used (format 0). However, if any value cannot, an expanded format where
+ * the r and p parameters are encoded using 4 bytes (format 1) is used. Both formats use a 128-bit
+ * salt and a 256-bit hash. The format is indicated as "rscrypt" which is short for "Rust Scrypt
+ * format."
+ *
+ * $rscrypt$<format>$<base64(log_n,r,p)>$<base64(salt)>$<based64(hash)>$
  *
  * # Arguments
  *
@@ -258,18 +269,27 @@ pub fn scrypt_simple(password: &str, params: &ScryptParams) -> ~str {
 
     scrypt(password.as_bytes(), salt, params, dk);
 
-    // TODO - Make this format more compact by restricting the value of N, r, and p?
-
-    let mut result = ~"0$";
-    let mut tmp = [0u8, ..12];
-    write_u32_le(tmp.mut_slice(0, 4), params.n);
-    write_u32_le(tmp.mut_slice(4, 8), params.r);
-    write_u32_le(tmp.mut_slice(8, 12), params.p);
-    result.push_str(tmp.slice_to(tmp.len()).to_base64(base64::STANDARD));
+    let mut result = ~"$rscrypt$";
+    if params.r < 256 && params.p < 256 {
+        result.push_str("0$");
+        let mut tmp = [0u8, ..3];
+        tmp[0] = params.log_n as u8;
+        tmp[1] = params.r as u8;
+        tmp[2] = params.p as u8;
+        result.push_str(tmp.slice_to(tmp.len()).to_base64(base64::STANDARD));
+    } else {
+        result.push_str("1$");
+        let mut tmp = [0u8, ..9];
+        tmp[0] = params.log_n as u8;
+        write_u32_le(tmp.mut_slice(1, 5), params.r);
+        write_u32_le(tmp.mut_slice(5, 9), params.p);
+        result.push_str(tmp.slice_to(tmp.len()).to_base64(base64::STANDARD));
+    }
     result.push_char('$');
     result.push_str(salt.slice_to(salt.len()).to_base64(base64::STANDARD));
     result.push_char('$');
     result.push_str(dk.slice_to(dk.len()).to_base64(base64::STANDARD));
+    result.push_char('$');
 
     return result;
 }
@@ -286,51 +306,90 @@ pub fn scrypt_simple(password: &str, params: &ScryptParams) -> ~str {
  */
 #[cfg(target_word_size = "32")]
 #[cfg(target_word_size = "64")]
-pub fn scrypt_check(password: &str, hashed_value: &str) -> bool {
+pub fn scrypt_check(password: &str, hashed_value: &str) -> Result<bool, &'static str> {
+    static ERR_STR: &'static str = "Hash is not in Rust Scrypt format.";
+
     let mut iter = hashed_value.split_iter('$');
 
-    // Version - currenlty only version 0 is supported
+    // Check that there are no characters before the first "$"
     match iter.next() {
-        Some(vstr) => assert!(vstr == "0"),
-        None => fail!()
+        Some(x) => if x != "" { return Err(ERR_STR); },
+        None => return Err(ERR_STR)
     }
 
-    // Parameters
-    let pstr = match iter.next() {
-        Some(pstr) => pstr,
-        None => fail!()
-    };
-    let pvec = match pstr.from_base64() {
-        Ok(x) => x,
-        Err(y) => fail!(y)
-    };
-    let mut pval = [0u32, ..3];
-    read_u32v_le(pval, pvec);
-    let params = ScryptParams::new(pval[0], pval[1], pval[2]);
+    // Check the name
+    match iter.next() {
+        Some(t) => if t != "rscrypt" { return Err(ERR_STR); },
+        None => return Err(ERR_STR)
+    }
+
+    // Parse format - currenlty only version 0 (compact) and 1 (expanded) are supported
+    let params: ScryptParams;
+    match iter.next() {
+        Some(fstr) => {
+            // Parse the parameters - the size of them depends on the if we are using the compact or
+            // expanded format
+            let pvec = match iter.next() {
+                Some(pstr) => match pstr.from_base64() {
+                    Ok(x) => x,
+                    Err(_) => return Err(ERR_STR)
+                },
+                None => return Err(ERR_STR)
+            };
+            match fstr {
+                "0" => {
+                    if pvec.len() != 3 { return Err(ERR_STR); }
+                    let log_n = pvec[0] as u32;
+                    let r = pvec[1] as u32;
+                    let p = pvec[2] as u32;
+                    params = ScryptParams::new(log_n, r, p);
+                }
+                "1" => {
+                    if pvec.len() != 9 { return Err(ERR_STR); }
+                    let log_n = pvec[0] as u32;
+                    let mut pval = [0u32, ..2];
+                    read_u32v_le(pval, pvec.slice(1, 9));
+                    params = ScryptParams::new(log_n, pval[0], pval[1]);
+                }
+                _ => return Err(ERR_STR)
+            }
+        }
+        None => return Err(ERR_STR)
+    }
 
     // Salt
-    let sstr = match iter.next() {
-        Some(sstr) => sstr,
-        None => fail!()
+    let salt = match iter.next() {
+        Some(sstr) => match sstr.from_base64() {
+            Ok(salt) => salt,
+            Err(_) => return Err(ERR_STR)
+        },
+        None => return Err(ERR_STR)
     };
-    let salt = match sstr.from_base64() {
-        Ok(x) => x,
-        Err(y) => fail!(y)
-    };
+    if salt.len() != 16 {
+        return Err(ERR_STR);
+    }
 
     // Hashed value
-    let hstr = match iter.next() {
-        Some(hstr) => hstr,
-        None => fail!()
+    let hash = match iter.next() {
+        Some(hstr) => match hstr.from_base64() {
+            Ok(hash) => hash,
+            Err(_) => return Err(ERR_STR)
+        },
+        None => return Err(ERR_STR)
     };
-    let hash = match hstr.from_base64() {
-        Ok(x) => x,
-        Err(y) => fail!(y)
-    };
+    if hash.len() != 32 {
+        return Err(ERR_STR);
+    }
 
-    // Make sure there is no trailing data
+    // Make sure that the input ends with a "$"
     match iter.next() {
-        Some(_) => fail!(),
+        Some(x) => if x != "" { return Err(ERR_STR); },
+        None => return Err(ERR_STR)
+    }
+
+    // Make sure there is no trailing data after the final "$"
+    match iter.next() {
+        Some(_) => return Err(ERR_STR),
         None => { }
     }
 
@@ -338,10 +397,10 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> bool {
     scrypt(password.as_bytes(), salt, &params, output);
 
     // Be careful here - its important that the comparison be done using a fixed time equality
-    // check. Otherwise an adversary that can time how long this step takes can learn about the
+    // check. Otherwise an adversary that can measure how long this step takes can learn about the
     // hashed value which would allow them to mount an offline brute force attack against the
-    // password.
-    return fixed_time_eq(output, hash);
+    // hashed password.
+    return Ok(fixed_time_eq(output, hash));
 }
 
 #[cfg(test, target_word_size = "32")]
@@ -354,7 +413,7 @@ mod test {
     struct Test {
         password: ~str,
         salt: ~str,
-        n: u32,
+        log_n: u32,
         r: u32,
         p: u32,
         expected: ~[u8]
@@ -367,7 +426,7 @@ mod test {
             Test {
                 password: ~"",
                 salt: ~"",
-                n: 16,
+                log_n: 4,
                 r: 1,
                 p: 1,
                 expected: ~[
@@ -383,7 +442,7 @@ mod test {
             Test {
                 password: ~"password",
                 salt: ~"NaCl",
-                n: 1024,
+                log_n: 10,
                 r: 8,
                 p: 16,
                 expected: ~[
@@ -399,7 +458,7 @@ mod test {
             Test {
                 password: ~"pleaseletmein",
                 salt: ~"SodiumChloride",
-                n: 16384,
+                log_n: 14,
                 r: 8,
                 p: 1,
                 expected: ~[
@@ -420,22 +479,51 @@ mod test {
         let tests = tests();
         for t in tests.iter() {
             let mut result = vec::from_elem(t.expected.len(), 0u8);
-            let params = ScryptParams::new(t.n, t.r, t.p);
+            let params = ScryptParams::new(t.log_n, t.r, t.p);
             scrypt(t.password.as_bytes(), t.salt.as_bytes(), &params, result);
             assert!(result == t.expected);
         }
     }
 
-    #[test]
-    fn test_scrypt_simple() {
+    fn test_scrypt_simple(log_n: u32, r: u32, p: u32) {
         let password = "password";
-        // These parameters are intentionally quite weak - the goal is to make the test run quickly!
-        let params = ScryptParams::new(128, 8, 1);
+
+        let params = ScryptParams::new(log_n, r, p);
         let out1 = scrypt_simple(password, &params);
         let out2 = scrypt_simple(password, &params);
+
+        // This just makes sure that a salt is being applied. It doesn't verify that that salt is
+        // cryptographically strong, however.
         assert!(out1 != out2);
-        assert!(scrypt_check(password, out1));
-        assert!(scrypt_check(password, out2));
-        assert!(!scrypt_check("other", out1));
+
+        match scrypt_check(password, out1) {
+            Ok(r) => assert!(r),
+            Err(_) => fail!()
+        }
+        match scrypt_check(password, out2) {
+            Ok(r) => assert!(r),
+            Err(_) => fail!()
+        }
+
+        match scrypt_check("wrong", out1) {
+            Ok(r) => assert!(!r),
+            Err(_) => fail!()
+        }
+        match scrypt_check("wrong", out2) {
+            Ok(r) => assert!(!r),
+            Err(_) => fail!()
+        }
+    }
+
+    #[test]
+    fn test_scrypt_simple_compact() {
+        // These parameters are intentionally very weak - the goal is to make the test run quickly!
+        test_scrypt_simple(7, 8, 1);
+    }
+
+    #[test]
+    fn test_scrypt_simple_expanded() {
+        // These parameters are intentionally very weak - the goal is to make the test run quickly!
+        test_scrypt_simple(3, 1, 256);
     }
 }
