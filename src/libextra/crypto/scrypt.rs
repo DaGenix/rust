@@ -365,9 +365,6 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> Result<bool, &'static
         },
         None => return Err(ERR_STR)
     };
-    if salt.len() != 16 {
-        return Err(ERR_STR);
-    }
 
     // Hashed value
     let hash = match iter.next() {
@@ -377,9 +374,6 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> Result<bool, &'static
         },
         None => return Err(ERR_STR)
     };
-    if hash.len() != 32 {
-        return Err(ERR_STR);
-    }
 
     // Make sure that the input ends with a "$"
     match iter.next() {
