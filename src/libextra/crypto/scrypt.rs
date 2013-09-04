@@ -186,7 +186,7 @@ impl ScryptParams {
         // trying to).
         // We know that p * r won't overflow from the previous checks.
         assert!(p * r <= MAX_MEM / 128);
-        assert!(r <= MAX_MEM / 128 >> log_n);
+        assert!(r <= (MAX_MEM / 128) >> log_n);
 
         return ScryptParams {
             log_n: log_n,
