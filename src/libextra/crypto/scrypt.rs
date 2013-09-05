@@ -241,12 +241,11 @@ pub fn scrypt(password: &[u8], salt: &[u8], params: &ScryptParams, output: &mut 
  *
  * # Format
  *
- * The format of the output is a modified version of the Modular Crypt Format (? ref) that encodes
- * algorithm used and the parameter values. If all parameter values can each fit within a single
- * byte, a compact format is used (format 0). However, if any value cannot, an expanded format where
- * the r and p parameters are encoded using 4 bytes (format 1) is used. Both formats use a 128-bit
- * salt and a 256-bit hash. The format is indicated as "rscrypt" which is short for "Rust Scrypt
- * format."
+ * The format of the output is a modified version of the Modular Crypt Format that encodes algorithm
+ * used and the parameter values. If all parameter values can each fit within a single byte, a
+ * compact format is used (format 0). However, if any value cannot, an expanded format where the r
+ * and p parameters are encoded using 4 bytes (format 1) is used. Both formats use a 128-bit salt
+ * and a 256-bit hash. The format is indicated as "rscrypt" which is short for "Rust Scrypt format."
  *
  * $rscrypt$<format>$<base64(log_n,r,p)>$<base64(salt)>$<based64(hash)>$
  *
