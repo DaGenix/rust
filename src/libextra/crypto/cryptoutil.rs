@@ -107,6 +107,16 @@ pub fn read_u32_le(input: &[u8]) -> u32 {
     }
 }
 
+/// Read the value of a vector of bytes as a u32 value in big-endian format.
+pub fn read_u32_be(input: &[u8]) -> u32 {
+    use std::cast::transmute;
+    use std::unstable::intrinsics::to_be32;
+    assert!(input.len() == 4);
+    unsafe {
+        let tmp: *i32 = transmute(input.unsafe_ref(0));
+        return to_be32(*tmp) as u32;
+    }
+}
 
 /// TMP
 pub fn fixed_time_eq<T: Int>(lhs: &[T], rhs: &[T]) -> bool {
