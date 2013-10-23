@@ -10,10 +10,8 @@
 
 #[allow(missing_doc)];
 
-use digest::Digest;
 use json;
 use json::ToJson;
-use sha1::Sha1;
 use serialize::{Encoder, Encodable, Decoder, Decodable};
 use arc::{Arc,RWArc};
 use treemap::TreeMap;
@@ -23,7 +21,6 @@ use std::{os, str, task};
 use std::rt::io;
 use std::rt::io::Writer;
 use std::rt::io::Decorator;
-use std::rt::io::extensions::ReaderUtil;
 use std::rt::io::mem::MemWriter;
 use std::rt::io::file::FileInfo;
 
@@ -276,19 +273,6 @@ fn json_decode<T:Decodable<json::Decoder>>(s: &str) -> T {
     Decodable::decode(&mut decoder)
 }
 
-fn digest<T:Encodable<json::Encoder>>(t: &T) -> ~str {
-    let mut sha = ~Sha1::new();
-    (*sha).input_str(json_encode(t));
-    (*sha).result_str()
-}
-
-fn digest_file(path: &Path) -> ~str {
-    let mut sha = ~Sha1::new();
-    let s = path.open_reader(io::Open).read_to_end();
-    (*sha).input(s);
-    (*sha).result_str()
-}
-
 impl Context {
 
     pub fn new(db: RWArc<Database>,
@@ -525,7 +509,7 @@ fn test() {
         let pth = pth.clone();
 
         // FIXME (#9639): This needs to handle non-utf8 paths
-        prep.declare_input("file", pth.as_str().unwrap(), digest_file(&pth));
+        prep.declare_input("file", pth.as_str().unwrap(), io::read_whole_file_str(&pth).unwrap());
         do prep.exec |_exe| {
             let out = make_path(~"foo.o");
             // FIXME (#9639): This needs to handle non-utf8 paths
