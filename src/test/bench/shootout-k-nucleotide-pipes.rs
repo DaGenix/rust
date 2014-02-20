@@ -23,6 +23,7 @@ use std::mem::replace;
 use std::option;
 use std::os;
 use std::io;
+use std::io::util::IteratorExtensions;
 use std::str;
 use std::task;
 use std::vec;
@@ -181,7 +182,7 @@ fn main() {
    // reading the sequence of interest
    let mut proc_mode = false;
 
-   for line in rdr.lines() {
+   for line in rdr.lines().fail_on_error() {
        let line = line.trim().to_owned();
 
        if line.len() == 0u { continue; }

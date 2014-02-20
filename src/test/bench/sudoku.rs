@@ -17,6 +17,7 @@ extern crate extra;
 use std::io;
 use std::io::stdio::StdReader;
 use std::io::BufferedReader;
+use std::io::util::IteratorExtensions;
 use std::os;
 use std::intrinsics::cttz16;
 use std::vec;
@@ -71,7 +72,7 @@ impl Sudoku {
         assert!(reader.read_line().unwrap() == ~"9,9"); /* assert first line is exactly "9,9" */
 
         let mut g = vec::from_fn(10u, { |_i| ~[0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8] });
-        for line in reader.lines() {
+        for line in reader.lines().fail_on_error() {
             let comps: ~[&str] = line.trim().split(',').collect();
 
             if comps.len() == 3u {

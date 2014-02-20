@@ -195,6 +195,49 @@ pub fn copy<R: Reader, W: Writer>(r: &mut R, w: &mut W) -> io::IoResult<()> {
     }
 }
 
+/// An extension trait that adds utility methods to Iterators over IoResults
+pub trait IteratorExtensions {
+    /// Produce unwrapped elements until an error is encountered. If the error
+    /// is EndOfFile, None is produced to end iteration. If any other error is
+    /// encountered, the iterator fail!()s.
+    ///
+    /// This method is useful for programs that do not want to concern themselves
+    /// with error handling, such as simple example code or one time use programs.
+    /// More robust programs should avoid using this method unless task failure is
+    /// the desired behavior when an IO error occurs.
+    fn fail_on_error(self) -> FailOnError<Self> {
+        FailOnError {
+            wrapped: self
+        }
+    }
+}
+
+impl <T, I: Iterator<io::IoResult<T>>> IteratorExtensions for I {}
+
+/// An iterator which produces unwrapped values from the wrapped iterator until
+/// EndOfFile is encountered. The iterator fail!()s if any other error is
+/// encountered.
+pub struct FailOnError<I> {
+    priv wrapped: I
+}
+
+impl <T, I: Iterator<io::IoResult<T>>> Iterator<T> for FailOnError<I> {
+    fn next(&mut self) -> Option<T> {
+        // All existing IO iterators already produce None when they encounter
+        // EndOfFile. However, in an effort to be more general, this iterator also
+        // checks for EndOfFile and returns None in that case as well.
+        match self.wrapped.next() {
+            Some(x) => match x {
+                Ok(y) => Some(y),
+                Err(io::IoError { kind: io::EndOfFile, .. }) => None,
+                Err(e) => fail!(e.to_str())
+            },
+            None => None
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod test {
     use io;
@@ -306,5 +349,53 @@ mod test {
         let mut w = MemWriter::new();
         copy(&mut r, &mut w).unwrap();
         assert_eq!(~[0, 1, 2, 3, 4], w.unwrap());
+    }
+
+    // This tests the usual case - using IteratorExtensions' fail_on_error()
+    // with an Iterator that already produces None when it encounters EndOfFile.
+    #[test]
+    fn test_fail_on_error_with_lines() {
+        let mut reader = MemReader::new(bytes!("a\nb\nc").to_owned());
+        let mut it = reader.lines().fail_on_error();
+        assert_eq!(it.next(), Some(~"a\n"));
+        assert_eq!(it.next(), Some(~"b\n"));
+        assert_eq!(it.next(), Some(~"c"));
+        assert_eq!(it.next(), None);
+    }
+
+    struct CountDown {
+        count: uint,
+        end: io::IoErrorKind
+    }
+
+    impl Iterator<io::IoResult<uint>> for CountDown {
+        fn next(&mut self) -> Option<io::IoResult<uint>> {
+            if self.count > 0 {
+                self.count -= 1;
+                Some(Ok(self.count + 1))
+            } else {
+                Some(Err(io::IoError { kind: self.end, desc: "", detail: None } ))
+            }
+        }
+    }
+
+    // This tests that fail_on_error() handles EndOfFile correctly for iterators
+    // that don't return None when they encounter EndOfFile.
+    #[test]
+    fn test_fail_on_error_eof() {
+        let iter = CountDown { count: 1, end: io::EndOfFile };
+        let mut iter = iter.fail_on_error();
+        assert!(iter.next().unwrap() == 1);
+        assert!(iter.next().is_none());
+    }
+
+    // This test checks that fail_on_error() does indeed fail!() if an iterator
+    // produces an Err other than EndOfFile.
+    #[test]
+    #[should_fail]
+    fn test_fail_on_error_failing() {
+        let iter = CountDown { count: 0, end: io::OtherIoError };
+        let mut iter = iter.fail_on_error();
+        iter.next();
     }
 }

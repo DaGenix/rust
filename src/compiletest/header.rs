@@ -134,9 +134,10 @@ pub fn is_test_ignored(config: &config, testfile: &Path) -> bool {
 
 fn iter_header(testfile: &Path, it: |&str| -> bool) -> bool {
     use std::io::{BufferedReader, File};
+    use std::io::util::IteratorExtensions;
 
     let mut rdr = BufferedReader::new(File::open(testfile).unwrap());
-    for ln in rdr.lines() {
+    for ln in rdr.lines().fail_on_error() {
         // Assume that any directives will be found before the first
         // module or function. This doesn't seem to be an optimization
         // with a warm page cache. Maybe with a cold one.

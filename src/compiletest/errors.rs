@@ -9,6 +9,7 @@
 // except according to those terms.
 
 use std::io::{BufferedReader, File};
+use std::io::util::IteratorExtensions;
 
 pub struct ExpectedError { line: uint, kind: ~str, msg: ~str }
 
@@ -18,7 +19,7 @@ pub fn load_errors(testfile: &Path) -> ~[ExpectedError] {
     let mut error_patterns = ~[];
     let mut rdr = BufferedReader::new(File::open(testfile).unwrap());
     let mut line_num = 1u;
-    for ln in rdr.lines() {
+    for ln in rdr.lines().fail_on_error() {
         error_patterns.push_all_move(parse_expected(line_num, ln));
         line_num += 1u;
     }
