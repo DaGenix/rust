@@ -1095,6 +1095,7 @@ pub mod types {
                     }
                 }
 
+                #[allow(uppercase_variables)]
                 pub struct MEMORY_BASIC_INFORMATION {
                     BaseAddress: LPVOID,
                     AllocationBase: LPVOID,
@@ -1106,6 +1107,7 @@ pub mod types {
                 }
                 pub type LPMEMORY_BASIC_INFORMATION = *mut MEMORY_BASIC_INFORMATION;
 
+                #[allow(uppercase_variables)]
                 pub struct OVERLAPPED {
                     Internal: *c_ulong,
                     InternalHigh: *c_ulong,
@@ -1123,6 +1125,7 @@ pub mod types {
 
                 pub type LPFILETIME = *mut FILETIME;
 
+                #[allow(uppercase_variables)]
                 pub struct GUID {
                     Data1: DWORD,
                     Data2: DWORD,
@@ -1130,6 +1133,7 @@ pub mod types {
                     Data4: [BYTE, ..8],
                 }
 
+                #[allow(uppercase_variables)]
                 pub struct WSAPROTOCOLCHAIN {
                     ChainLen: c_int,
                     ChainEntries: [DWORD, ..MAX_PROTOCOL_CHAIN],
@@ -1137,6 +1141,7 @@ pub mod types {
 
                 pub type LPWSAPROTOCOLCHAIN = *mut WSAPROTOCOLCHAIN;
 
+                #[allow(uppercase_variables)]
                 pub struct WSAPROTOCOL_INFO {
                     dwServiceFlags1: DWORD,
                     dwServiceFlags2: DWORD,
