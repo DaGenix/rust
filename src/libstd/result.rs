@@ -270,6 +270,37 @@ pub fn fold_<T,E,Iter:Iterator<Result<T,E>>>(iterator: Iter) -> Result<(),E> {
     fold(iterator, (), |_, _| ())
 }
 
+/// An extension trait that adds utility methods to Iterators over Results
+pub trait IteratorExtensions {
+    /// Produce unwrapped elements until an error is encountered. Any error will
+    /// result in None being produced to end iteration. The Error is discarded.
+    fn stop_on_error(self) -> StopOnError<Self> {
+        StopOnError {
+            wrapped: self
+        }
+    }
+}
+
+impl <T, E, I: Iterator<Result<T, E>>> IteratorExtensions for I {}
+
+/// An iterator which produces unwrapped values from the wrapped iterator
+/// until any Error is encountered.
+pub struct StopOnError<I> {
+    priv wrapped: I
+}
+
+impl <T, E, I: Iterator<Result<T, E>>> Iterator<T> for StopOnError<I> {
+    fn next(&mut self) -> Option<T> {
+        match self.wrapped.next() {
+            Some(x) => match x {
+                Ok(y) => Some(y),
+                Err(_) => None
+            },
+            None => None
+        }
+    }
+}
+
 /////////////////////////////////////////////////////////////////////////////
 // Tests
 /////////////////////////////////////////////////////////////////////////////
@@ -388,5 +419,28 @@ mod tests {
 
         assert_eq!(format!("{}", ok), ~"Ok(100)");
         assert_eq!(format!("{}", err), ~"Err(Err)");
+    }
+
+    struct CountDown {
+        count: uint
+    }
+
+    impl Iterator<Result<uint, ()>> for CountDown {
+        fn next(&mut self) -> Option<Result<uint, ()>> {
+            if self.count > 0 {
+                self.count -= 1;
+                Some(Ok(self.count + 1))
+            } else {
+                Some(Err(()))
+            }
+        }
+    }
+
+    #[test]
+    fn test_stop_on_error() {
+        let iter = CountDown { count: 1 };
+        let mut iter = iter.stop_on_error();
+        assert!(iter.next().unwrap() == 1);
+        assert!(iter.next().is_none());
     }
 }
